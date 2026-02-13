@@ -19,7 +19,7 @@ app.use(express.json());
 ======================= */
 app.use(
   cors({
-    origin: "https://deliverybackend-0i61.onrender.com",
+    origin: "https://deliveryweb-navy.vercel.app",
     credentials: true
   })
 );
@@ -28,7 +28,7 @@ app.use(
 app.options(
   "*",
   cors({
-    origin: "https://deliverybackend-0i61.onrender.com",
+    origin: "https://deliveryweb-navy.vercel.app",
     credentials: true
   })
 );
