@@ -19,7 +19,7 @@ app.use(express.json());
 ======================= */
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: "https://deliverybackend-0i61.onrender.com",
     credentials: true
   })
 );
@@ -28,7 +28,7 @@ app.use(
 app.options(
   "*",
   cors({
-    origin: "http://localhost:5173",
+    origin: "https://deliverybackend-0i61.onrender.com",
     credentials: true
   })
 );
