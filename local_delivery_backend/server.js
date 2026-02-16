@@ -17,12 +17,10 @@ app.use(express.json());
 /* =======================
    CORS (CORRECT)
 ======================= */
-app.use(
-  cors({
-    origin: "https://deliveryweb-navy.vercel.app",
-    credentials: true
-  })
-);
+app.use(cors({
+  origin: "https://deliveryweb-navy.vercel.app",
+  credentials: true
+}));
 
 // handle preflight requests
 app.options(
@@ -33,17 +31,20 @@ app.options(
   })
 );
 
+app.set("trust proxy", 1);
 /* =======================
    SESSION
 ======================= */
 app.use(
   session({
-    secret: "secret",
+    secret: process.env.SESSION_SECRET || "secret",
     resave: false,
     saveUninitialized: false,
+    proxy: true, // required for Render
     cookie: {
+      secure: true,       // required for HTTPS
       httpOnly: true,
-      sameSite: "lax" // localhost safe
+      sameSite: "none"    // REQUIRED for cross-domain
     }
   })
 );
