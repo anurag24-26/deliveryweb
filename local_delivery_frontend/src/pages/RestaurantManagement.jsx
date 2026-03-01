@@ -17,16 +17,8 @@ const RestaurantOrderManagement = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    checkAuthAndFetchData();
-    
-    const interval = setInterval(() => {
-      if (restaurant) {
-        fetchOrders(restaurant._id, true);
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [restaurant]);
+  checkAuthAndFetchData();
+}, []); // ✅ empty dependency
 
   // Helper function to safely parse JSON
   const safeJsonParse = async (response) => {
