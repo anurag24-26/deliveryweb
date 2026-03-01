@@ -50,7 +50,7 @@ const RestaurantOrderManagement = () => {
     try {
       console.log('Fetching restaurant data...');
       
-      const restaurantResponse = await fetch('/api/restaurants/my', {
+      const restaurantResponse = await fetch('https://deliverybackend-0i61.onrender.com/api/restaurants/my', {
         credentials: 'include',
         headers: {
           'Accept': 'application/json',
