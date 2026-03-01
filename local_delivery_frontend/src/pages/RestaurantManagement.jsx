@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './RestaurantOrderManagement.css';
-
+const API_BASE = "https://deliverybackend-0i61.onrender.com";
 const RestaurantOrderManagement = () => {
   const navigate = useNavigate();
   
@@ -127,148 +127,112 @@ const checkAuthAndFetchData = async () => {
 };
 
   const fetchOrders = async (restaurantId, silent = false) => {
-    try {
-      console.log('Fetching orders for restaurant:', restaurantId);
-      
-      const response = await fetch(`/api/orders/restaurant/${restaurantId}`, {
-        credentials: 'include',
+  try {
+    console.log("📦 Fetching orders for:", restaurantId);
+
+    const response = await fetch(
+      `${API_BASE}/api/orders/restaurant/${restaurantId}`,
+      {
+        method: "GET",
+        credentials: "include",
         headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (response.status === 401) {
-        if (!silent) {
-          setError('Session expired. Please log in again.');
-          setTimeout(() => navigate('/login'), 2000);
-        }
-        return;
-      }
-
-      if (response.status === 403) {
-        if (!silent) {
-          setError('Access denied');
-        }
-        return;
-      }
-
-      let data;
-      try {
-        data = await safeJsonParse(response);
-      } catch (parseError) {
-        if (parseError.message === 'REDIRECT_TO_LOGIN' && !silent) {
-          setError('Session expired. Redirecting to login...');
-          setTimeout(() => navigate('/login'), 2000);
-        }
-        return;
-      }
-
-      console.log('Orders loaded:', data.orders?.length || 0);
-      setOrders(data.orders || []);
-      
-      if (!silent) {
-        setError('');
-      }
-    } catch (err) {
-      console.error('Error fetching orders:', err);
-      if (!silent) {
-        setError('Failed to load orders');
-      }
-    }
-  };
-
-  const updateOrderStatus = async (orderId, newStatus) => {
-    setUpdatingOrderId(orderId);
-    try {
-      const response = await fetch(`/api/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
+          Accept: "application/json",
         },
-        credentials: 'include',
-        body: JSON.stringify({ status: newStatus })
-      });
-
-      if (response.status === 401) {
-        showNotification('error', 'Session expired. Please log in again.');
-        setTimeout(() => navigate('/login'), 2000);
-        return;
       }
+    );
 
-      if (!response.ok) {
-        const errorData = await safeJsonParse(response);
-        throw new Error(errorData.error || 'Failed to update order status');
-      }
+    console.log("Orders status:", response.status);
 
-      const data = await safeJsonParse(response);
-      
-      setOrders(prevOrders =>
-        prevOrders.map(order =>
-          order._id === orderId ? data.order : order
-        )
-      );
-
-      showNotification('success', `✓ Order status updated to ${newStatus.replace('_', ' ')}`);
-
-    } catch (err) {
-      console.error('Error updating order:', err);
-      showNotification('error', err.message);
-    } finally {
-      setUpdatingOrderId(null);
-    }
-  };
-
-  const handleCancelOrder = async () => {
-    if (!selectedOrder || !cancelReason.trim()) {
-      showNotification('error', 'Please provide a cancellation reason');
+    if (response.status === 401) {
+      if (!silent) setError("Session expired");
       return;
     }
 
-    setUpdatingOrderId(selectedOrder._id);
-    try {
-      const response = await fetch(`/api/orders/${selectedOrder._id}/restaurant-cancel`, {
-        method: 'PATCH',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        credentials: 'include',
-        body: JSON.stringify({ reason: cancelReason })
-      });
-
-      if (response.status === 401) {
-        showNotification('error', 'Session expired. Please log in again.');
-        setTimeout(() => navigate('/login'), 2000);
-        return;
-      }
-
-      if (!response.ok) {
-        const errorData = await safeJsonParse(response);
-        throw new Error(errorData.error || 'Failed to cancel order');
-      }
-
-      const data = await safeJsonParse(response);
-      
-      setOrders(prevOrders =>
-        prevOrders.map(order =>
-          order._id === selectedOrder._id ? data.order : order
-        )
-      );
-
-      showNotification('success', '✓ Order cancelled successfully');
-      setShowCancelModal(false);
-      setSelectedOrder(null);
-      setCancelReason('');
-
-    } catch (err) {
-      console.error('Error cancelling order:', err);
-      showNotification('error', err.message);
-    } finally {
-      setUpdatingOrderId(null);
+    if (!response.ok) {
+      throw new Error("Failed to fetch orders");
     }
-  };
+
+    const data = await response.json();
+
+    console.log("✅ Orders loaded:", data.orders?.length);
+
+    setOrders(data.orders || []);
+
+  } catch (err) {
+    console.error("🔥 Orders fetch error:", err);
+    if (!silent) setError(err.message);
+  }
+};
+
+  const updateOrderStatus = async (orderId, newStatus) => {
+  setUpdatingOrderId(orderId);
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/orders/${orderId}/status`,
+      {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: newStatus }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Failed to update status");
+    }
+
+    const data = await response.json();
+
+    setOrders(prev =>
+      prev.map(order =>
+        order._id === orderId ? data.order : order
+      )
+    );
+
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setUpdatingOrderId(null);
+  }
+};
+
+  const handleCancelOrder = async () => {
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/orders/${selectedOrder._id}/restaurant-cancel`,
+      {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ reason: cancelReason }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Failed to cancel order");
+    }
+
+    const data = await response.json();
+
+    setOrders(prev =>
+      prev.map(order =>
+        order._id === selectedOrder._id ? data.order : order
+      )
+    );
+
+    setShowCancelModal(false);
+    setSelectedOrder(null);
+    setCancelReason("");
+
+  } catch (err) {
+    console.error(err);
+  }
+};
 
   const showNotification = (type, message) => {
     const notification = document.createElement('div');
