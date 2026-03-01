@@ -4,6 +4,9 @@ import App from "./App";
 import { AuthProvider } from "./context/AuthContext";
 import "./index.css";
 import "leaflet/dist/leaflet.css";
+import { inject } from "@vercel/analytics";
+
+inject(); // <-- Add this line
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
