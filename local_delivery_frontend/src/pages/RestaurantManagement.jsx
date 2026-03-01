@@ -46,65 +46,85 @@ const RestaurantOrderManagement = () => {
     return response.json();
   };
 
-  const checkAuthAndFetchData = async () => {
-    try {
-      console.log('Fetching restaurant data...');
-      
-      const restaurantResponse = await fetch('https://deliverybackend-0i61.onrender.com/api/restaurants/my', {
-        credentials: 'include',
+const checkAuthAndFetchData = async () => {
+  try {
+    setLoading(true);
+    setError(null);
+
+    console.log("🚀 Fetching restaurant data...");
+
+    const response = await fetch(
+      "https://deliverybackend-0i61.onrender.com/api/restaurants/my",
+      {
+        method: "GET",
+        credentials: "include", // REQUIRED for cookies
         headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
-      });
-
-      console.log('Response status:', restaurantResponse.status);
-
-      // Handle authentication errors
-      if (restaurantResponse.status === 401) {
-        setError('Session expired. Please log in again.');
-        setTimeout(() => navigate('/login'), 2000);
-        return;
+          Accept: "application/json",
+        },
       }
+    );
 
-      if (restaurantResponse.status === 403) {
-        setError('Access denied. This page is for restaurant owners only.');
-        setTimeout(() => navigate('/'), 3000);
-        return;
-      }
+    console.log("Status:", response.status);
 
-      if (restaurantResponse.status === 404) {
-        setError('No restaurant found. Please create a restaurant first.');
-        setTimeout(() => navigate('/restaurant/dashboard'), 3000);
-        return;
-      }
-
-      // Parse JSON safely
-      let restaurantData;
-      try {
-        restaurantData = await safeJsonParse(restaurantResponse);
-      } catch (parseError) {
-        if (parseError.message === 'REDIRECT_TO_LOGIN') {
-          setError('Session expired. Redirecting to login...');
-          setTimeout(() => navigate('/login'), 2000);
-          return;
-        }
-        throw parseError;
-      }
-
-      console.log('Restaurant data loaded:', restaurantData);
-      setRestaurant(restaurantData);
-
-      // Fetch orders
-      await fetchOrders(restaurantData._id);
-
-    } catch (err) {
-      console.error('Error in checkAuthAndFetchData:', err);
-      setError(`Failed to load data: ${err.message}`);
-    } finally {
-      setLoading(false);
+    // ---------- AUTH CHECKS ----------
+    if (response.status === 401) {
+      setError("Session expired. Please log in again.");
+      setTimeout(() => navigate("/login"), 2000);
+      return;
     }
-  };
+
+    if (response.status === 403) {
+      setError("Access denied. Restaurant owners only.");
+      setTimeout(() => navigate("/"), 2500);
+      return;
+    }
+
+    if (response.status === 404) {
+      setError("No restaurant found. Create one first.");
+      setTimeout(() => navigate("/restaurant/dashboard"), 2500);
+      return;
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error("Server error:", text);
+      throw new Error("Server returned an error.");
+    }
+
+    // ---------- SAFE JSON PARSE ----------
+    let restaurantData;
+
+    try {
+      restaurantData = await response.json();
+    } catch (err) {
+      console.error("Invalid JSON response");
+      throw new Error("Invalid server response.");
+    }
+
+    if (!restaurantData || !restaurantData._id) {
+      throw new Error("Invalid restaurant data received.");
+    }
+
+    console.log("✅ Restaurant loaded:", restaurantData);
+
+    setRestaurant(restaurantData);
+
+    // ---------- FETCH ORDERS ----------
+    await fetchOrders(restaurantData._id);
+
+  } catch (error) {
+    console.error("🔥 Error:", error);
+
+    if (error.message.includes("Failed to fetch")) {
+      setError("Unable to connect to server. Backend may be sleeping (Render cold start). Try again.");
+    } else {
+      setError(error.message);
+    }
+
+  } finally {
+    setLoading(false);
+  }
+};
 
   const fetchOrders = async (restaurantId, silent = false) => {
     try {
