@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const session = require("express-session");
 const passport = require("passport");
+const MongoStore = require("connect-mongo");
 
 require("./src/config/passport");
 
@@ -35,20 +36,25 @@ app.set("trust proxy", 1);
 /* =======================
    SESSION
 ======================= */
+
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "secret",
     resave: false,
     saveUninitialized: false,
-    proxy: true, // required for Render
+    proxy: true,
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGO_URI,
+      collectionName: "sessions"
+    }),
     cookie: {
-      secure: true,       // required for HTTPS
+      secure: true,
       httpOnly: true,
-      sameSite: "none"    // REQUIRED for cross-domain
+      sameSite: "none",
+      maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
     }
   })
 );
-
 /* =======================
    PASSPORT
 ======================= */
