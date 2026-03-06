@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Admin Dashboard</title>
+  <style>
+    body{background:#0f0f0f;color:#e5e5e5;font-family:monospace;padding:24px;margin:0}
+    h1{color:#f97316} h2{color:#fb923c;border-bottom:1px solid #333;padding-bottom:8px;margin-top:40px}
+    .stats{display:flex;gap:16px;margin-bottom:32px;flex-wrap:wrap}
+    .card{background:#1a1a1a;padding:20px 28px;border-radius:10px;min-width:160px}
+    .card h3{margin:0;color:#f97316;font-size:28px}
+    .card p{margin:4px 0 0;color:#888;font-size:13px}
+    table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
+    th{background:#1f1f1f;color:#f97316;padding:10px;text-align:left}
+    td{padding:8px 10px;border-bottom:1px solid #222}
+    tr:hover td{background:#1a1a1a}
+    .badge{padding:2px 8px;border-radius:20px;font-size:11px;color:white}
+    .PLACED{background:#1d4ed8}.CONFIRMED{background:#065f46}.PREPARING{background:#92400e}
+    .OUT_FOR_DELIVERY{background:#6d28d9}.DELIVERED{background:#14532d}.CANCELLED{background:#7f1d1d}
+    a.logout{color:#f97316;text-decoration:none;float:right;margin-top:8px}
+  </style>
+</head>
+<body>
+  <h1>⚡ Admin Dashboard <a class="logout" href="/admin/logout">Logout</a></h1>
+
+  <div class="stats">
+    <div class="card"><h3><%= stats.totalUsers %></h3><p>Total Users</p></div>
+    <div class="card"><h3><%= stats.totalRestaurants %></h3><p>Restaurants</p></div>
+    <div class="card"><h3><%= stats.totalOrders %></h3><p>Orders</p></div>
+    <div class="card"><h3>₹<%= stats.totalRevenue.toFixed(0) %></h3><p>Revenue</p></div>
+  </div>
+
+  <h2>👥 Users (<%= users.length %>)</h2>
+  <table>
+    <tr><th>Name</th><th>Email</th><th>Role</th><th>Phone</th><th>Created</th></tr>
+    <% users.forEach(u => { %>
+    <tr>
+      <td><%= u.name||'—' %></td><td><%= u.email||'—' %></td>
+      <td><%= u.role %></td><td><%= u.phone||'—' %></td>
+      <td><%= u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-IN') : '—' %></td>
+    </tr>
+    <% }) %>
+  </table>
+
+  <h2>🍽️ Restaurants (<%= restaurants.length %>)</h2>
+  <table>
+    <tr><th>Name</th><th>Owner</th><th>Owner Email</th><th>Address</th><th>Phone</th></tr>
+    <% restaurants.forEach(r => { %>
+    <tr>
+      <td><%= r.name||'—' %></td>
+      <td><%= r.owner?.name||'—' %></td><td><%= r.owner?.email||'—' %></td>
+      <td><%= r.address||'—' %></td><td><%= r.phone||'—' %></td>
+    </tr>
+    <% }) %>
+  </table>
+
+  <h2>📦 Orders (<%= orders.length %>)</h2>
+  <table>
+    <tr><th>User</th><th>Restaurant</th><th>Items</th><th>Total</th><th>Status</th><th>Date</th></tr>
+    <% orders.forEach(o => { %>
+    <tr>
+      <td><%= o.user?.name||'—' %></td>
+      <td><%= o.restaurant?.name||'—' %></td>
+      <td><%= o.items?.length||0 %> items</td>
+      <td>₹<%= o.total %></td>
+      <td><span class="badge <%= o.status %>"><%= o.status %></span></td>
+      <td><%= new Date(o.orderDate).toLocaleDateString('en-IN') %></td>
+    </tr>
+    <% }) %>
+  </table>
+
+  <h2>🍕 Menu Items (<%= menus.length %>)</h2>
+  <table>
+    <tr><th>Name</th><th>Restaurant</th><th>Price</th><th>Veg</th><th>Available</th><th>Bestseller</th></tr>
+    <% menus.forEach(m => { %>
+    <tr>
+      <td><%= m.name %></td><td><%= m.restaurant?.name||'—' %></td>
+      <td>₹<%= m.price %></td>
+      <td><%= m.isVeg?'🟢 Veg':'🔴 Non-Veg' %></td>
+      <td><%= m.isAvailable?'✅':'❌' %></td>
+      <td><%= m.isBestSeller?'⭐':'—' %></td>
+    </tr>
+    <% }) %>
+  </table>
+</body>
+</html>

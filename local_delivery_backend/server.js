@@ -6,6 +6,9 @@ const session = require("express-session");
 const passport = require("passport");
 const MongoStore = require("connect-mongo").default;
 
+const adminRoutes = require("./src/routes/adminRoutes");
+const path = require("path");
+
 require("./src/config/passport");
 
 const app = express();
@@ -14,6 +17,7 @@ const app = express();
    BODY PARSER
 ======================= */
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // ← ADDED: needed for admin login form
 
 /* =======================
    CORS (CORRECT)
@@ -32,11 +36,14 @@ app.options(
   })
 );
 
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "src/views"));
+
 app.set("trust proxy", 1);
+
 /* =======================
    SESSION
 ======================= */
-
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "secret",
@@ -55,6 +62,7 @@ app.use(
     }
   })
 );
+
 /* =======================
    PASSPORT
 ======================= */
@@ -77,6 +85,7 @@ app.use("/api/restaurants", require("./src/routes/restaurantRoutes"));
 app.use("/api/orders", require("./src/routes/orderRoutes"));
 app.use("/api/menu", require("./src/routes/menuRoutes"));
 app.use("/api/profile", require("./src/routes/profileRoutes"));
+app.use("/admin", adminRoutes);
 
 /* =======================
    START SERVER

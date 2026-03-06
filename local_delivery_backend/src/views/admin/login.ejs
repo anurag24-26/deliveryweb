@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Admin Login</title>
+  <style>
+    body { background:#0f0f0f; color:white; font-family:monospace;
+           display:flex; justify-content:center; align-items:center; height:100vh; margin:0; }
+    .box { background:#1a1a1a; padding:40px; border-radius:12px; width:320px; }
+    h2 { color:#f97316; margin-bottom:24px; }
+    input { width:100%; padding:10px; margin-bottom:16px; background:#2a2a2a;
+            border:1px solid #333; color:white; border-radius:6px; box-sizing:border-box; }
+    button { width:100%; padding:10px; background:#f97316; border:none;
+             color:white; border-radius:6px; cursor:pointer; font-size:16px; }
+    .error { color:#ef4444; margin-bottom:12px; font-size:14px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>🔐 Admin Panel</h2>
+    <% if (error) { %><div class="error"><%= error %></div><% } %>
+    <form method="POST" action="/admin/login">
+      <input type="password" name="password" placeholder="Enter password" autofocus />
+      <button type="submit">Login</button>
+    </form>
+  </div>
+</body>
+</html>
