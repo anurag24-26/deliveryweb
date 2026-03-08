@@ -1,6 +1,3 @@
-const mongoose = require("mongoose");
-const locationSchema = require("./locationSchema");
-
 const RestaurantSchema = new mongoose.Schema({
   owner: {
     type: mongoose.Schema.Types.ObjectId,
@@ -10,16 +7,19 @@ const RestaurantSchema = new mongoose.Schema({
   name: String,
   address: String,
   phone: String,
-
-  // 🆕 NEW
   location: locationSchema,
 
-  menu: [
-    {
-      item: String,
-      price: Number
+  // 🆕 Restaurant images
+  images: {
+    type: [String],   // array of Cloudinary URLs
+    default: [],
+    validate: {
+      validator: function(arr) {
+        return arr.length <= 5; // max 5 images
+      },
+      message: "Maximum 5 images allowed"
     }
-  ]
-});
+  },
 
-module.exports = mongoose.model("Restaurant", RestaurantSchema);
+  menu: [{ item: String, price: Number }]
+});

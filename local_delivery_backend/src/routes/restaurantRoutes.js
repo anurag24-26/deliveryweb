@@ -1,19 +1,17 @@
 const router = require("express").Router();
 const Restaurant = require("../models/Restaurant");
+const upload = require("../config/cloudinary");
 
 /**
  * Get logged-in restaurant owner's restaurant
  */
 router.get("/my", async (req, res) => {
   try {
-    // Check if user is logged in and has the correct role
     if (!req.user || req.user.role !== "RESTAURANT") {
       return res.status(403).json({ message: "Access denied" });
     }
 
-    const restaurant = await Restaurant.findOne({
-      owner: req.user._id
-    });
+    const restaurant = await Restaurant.findOne({ owner: req.user._id });
 
     if (!restaurant) {
       return res.status(404).json({ message: "No restaurant found for this owner" });
@@ -26,100 +24,150 @@ router.get("/my", async (req, res) => {
 });
 
 /**
- * Create restaurant (only once per owner)
+ * Create restaurant (only once per owner) — min 1 image required
  */
-router.post("/create", async (req, res) => {
+router.post("/create", upload.array("images", 5), async (req, res) => {
   try {
-    // 1. Authorization check
     if (!req.user || req.user.role !== "RESTAURANT") {
       return res.status(403).json({ message: "Access denied" });
     }
 
     const { name, address, phone, location } = req.body;
 
-    // 2. Validation
     if (!name || !address || !phone) {
-      return res.status(400).json({
-        message: "Name, address, and phone are required"
-      });
+      return res.status(400).json({ message: "Name, address, and phone are required" });
     }
 
-    // Validate location if provided
-    if (location && (!location.lat || !location.lng)) {
-      return res.status(400).json({
-        message: "Location must have lat and lng"
-      });
+    // At least 1 image required
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: "At least one restaurant image is required" });
     }
 
-    // 3. Check if the owner already has a restaurant
+    // Parse location — FormData sends it as a string
+    let parsedLocation;
+    if (location) {
+      try {
+        parsedLocation = typeof location === "string" ? JSON.parse(location) : location;
+        if (!parsedLocation.lat || !parsedLocation.lng) {
+          return res.status(400).json({ message: "Location must have lat and lng" });
+        }
+      } catch (e) {
+        return res.status(400).json({ message: "Invalid location format" });
+      }
+    }
+
     const existing = await Restaurant.findOne({ owner: req.user._id });
     if (existing) {
-      return res.status(400).json({ 
-        message: "You have already created a restaurant" 
-      });
+      return res.status(400).json({ message: "You have already created a restaurant" });
     }
 
-    // 4. Create the restaurant
+    const imageUrls = req.files.map(file => file.path);
+
     const restaurant = await Restaurant.create({
       owner: req.user._id,
       name,
       address,
       phone,
-      location,
+      location: parsedLocation,
+      images: imageUrls,
       menu: []
     });
 
     res.status(201).json(restaurant);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: err.message || "Server error" });
   }
 });
 
 /**
- * UPDATE restaurant details
+ * Update restaurant details — optionally replace images
  */
-router.put("/update", async (req, res) => {
+router.put("/update", upload.array("images", 5), async (req, res) => {
   try {
-    // 1. Authorization check
     if (!req.user || req.user.role !== "RESTAURANT") {
       return res.status(403).json({ message: "Access denied" });
     }
 
     const { name, address, phone, location } = req.body;
 
-    // 2. Find the restaurant
     const restaurant = await Restaurant.findOne({ owner: req.user._id });
     if (!restaurant) {
-      return res.status(404).json({ 
-        message: "No restaurant found. Please create one first." 
-      });
+      return res.status(404).json({ message: "No restaurant found. Please create one first." });
     }
 
-    // 3. Build update object
     const updateData = {};
     if (name) updateData.name = name;
     if (address) updateData.address = address;
     if (phone) updateData.phone = phone;
-    
+
     if (location) {
-      // Validate location has lat and lng
-      if (!location.lat || !location.lng) {
-        return res.status(400).json({ 
-          message: "Location must have lat and lng" 
-        });
+      try {
+        const loc = typeof location === "string" ? JSON.parse(location) : location;
+        if (!loc.lat || !loc.lng) {
+          return res.status(400).json({ message: "Location must have lat and lng" });
+        }
+        updateData.location = loc;
+      } catch (e) {
+        return res.status(400).json({ message: "Invalid location format" });
       }
-      updateData.location = location;
     }
 
-    // 4. Update the restaurant
+    // If new images uploaded — replace all existing ones
+    if (req.files && req.files.length > 0) {
+      updateData.images = req.files.map(file => file.path);
+    }
+
     const updatedRestaurant = await Restaurant.findByIdAndUpdate(
       restaurant._id,
       updateData,
-      { new: true }
+      { new: true, runValidators: true }
     );
 
     res.json(updatedRestaurant);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message || "Server error" });
+  }
+});
+
+/**
+ * Delete one specific image from restaurant
+ */
+router.delete("/image", async (req, res) => {
+  try {
+    if (!req.user || req.user.role !== "RESTAURANT") {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const { imageUrl } = req.body;
+    if (!imageUrl) {
+      return res.status(400).json({ message: "imageUrl is required" });
+    }
+
+    const restaurant = await Restaurant.findOne({ owner: req.user._id });
+    if (!restaurant) {
+      return res.status(404).json({ message: "Restaurant not found" });
+    }
+
+    // Must keep at least 1 image
+    if (restaurant.images.length <= 1) {
+      return res.status(400).json({ message: "Cannot delete — restaurant must have at least 1 image" });
+    }
+
+    restaurant.images = restaurant.images.filter(img => img !== imageUrl);
+    await restaurant.save();
+
+    // Delete from Cloudinary
+    try {
+      const publicId = imageUrl.split("/").slice(-2).join("/").split(".")[0];
+      await require("cloudinary").v2.uploader.destroy(publicId);
+    } catch (cloudErr) {
+      console.error("Cloudinary delete failed:", cloudErr);
+      // Don't fail the request — DB already updated
+    }
+
+    res.json({ message: "Image deleted", images: restaurant.images });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -127,13 +175,12 @@ router.put("/update", async (req, res) => {
 });
 
 /**
- * PUBLIC: Get all restaurants (for users)
+ * PUBLIC: Get all restaurants
  */
 router.get("/", async (req, res) => {
   try {
-    // Return only necessary fields for the public list
     const restaurants = await Restaurant.find()
-      .select("name address phone location");
+      .select("name address phone location images");  // ← added images
 
     res.json(restaurants);
   } catch (err) {
