@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://deliveryweb-navy.vercel.app/sitemap.xml
