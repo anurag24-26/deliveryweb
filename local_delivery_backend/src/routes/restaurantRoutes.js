@@ -1,7 +1,7 @@
 const router = require("express").Router();
 const Restaurant = require("../models/Restaurant");
-const upload = require("../config/cloudinary");
 
+const { parser } = require("../config/cloudinary"); // ← change this
 /**
  * Get logged-in restaurant owner's restaurant
  */
@@ -26,7 +26,7 @@ router.get("/my", async (req, res) => {
 /**
  * Create restaurant (only once per owner) — min 1 image required
  */
-router.post("/create", upload.array("images", 5), async (req, res) => {
+router.post("/create", parser.array("images", 5), async (req, res) => {
   try {
     if (!req.user || req.user.role !== "RESTAURANT") {
       return res.status(403).json({ message: "Access denied" });
@@ -83,7 +83,7 @@ router.post("/create", upload.array("images", 5), async (req, res) => {
 /**
  * Update restaurant details — optionally replace images
  */
-router.put("/update", upload.array("images", 5), async (req, res) => {
+router.put("/update", parser.array("images", 5), async (req, res) => {
   try {
     if (!req.user || req.user.role !== "RESTAURANT") {
       return res.status(403).json({ message: "Access denied" });
