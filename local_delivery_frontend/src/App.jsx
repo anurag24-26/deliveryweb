@@ -16,6 +16,10 @@ import RestProfile from "./pages/RestProfile.jsx";
 import About from "./pages/About.jsx";
 import Contact from "./pages/Contact.jsx";
 
+import RefundPolicy from "./components/RefundPolicy.jsx";
+import PrivacyPolicy from "./components/PrivacyPolicy.jsx";
+import TermsOfService from "./components/TermsOfService.jsx";
+import HelpCenter from "./components/HelpCenter.jsx";
 export default function App() {
   return (
     <BrowserRouter>
@@ -35,7 +39,10 @@ export default function App() {
         <Route path="/manage" element={<RestaurantManagement />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/cart/:restaurantId" element={<Cart />} />
-
+<Route path="/privacy" element={<PrivacyPolicy />} />
+<Route path="/terms" element={<TermsOfService />} />
+<Route path="/refunds" element={<RefundPolicy />} />
+<Route path="/help" element={<HelpCenter />} />
         <Route
           path="/restaurants"
           element={
