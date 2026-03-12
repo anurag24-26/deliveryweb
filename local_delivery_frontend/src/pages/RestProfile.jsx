@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import LocationPicker from "../components/LocationPicker";
+import PhoneVerification from "../components/PhoneVerification";
 
 const API = "https://deliverybackend-0i61.onrender.com";
 
@@ -11,12 +12,13 @@ export default function RestaurantProfile() {
   const [location, setLocation] = useState(null);
   const [form, setForm] = useState({ name: "", address: "", phone: "" });
   const [errors, setErrors] = useState({});
+  const [phoneVerified, setPhoneVerified] = useState(false);
 
   // Image states
-  const [existingImages, setExistingImages] = useState([]);   // URLs from DB
-  const [newImages, setNewImages] = useState([]);             // new File objects
-  const [newPreviews, setNewPreviews] = useState([]);         // preview URLs
-  const [deletingUrl, setDeletingUrl] = useState(null);       // which URL is being deleted
+  const [existingImages, setExistingImages] = useState([]);
+  const [newImages, setNewImages] = useState([]);
+  const [newPreviews, setNewPreviews] = useState([]);
+  const [deletingUrl, setDeletingUrl] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -31,6 +33,7 @@ export default function RestaurantProfile() {
         });
         if (res.data.location) setLocation(res.data.location);
         if (res.data.images) setExistingImages(res.data.images);
+        if (res.data.phone) setPhoneVerified(true); // pre-verified if phone exists in DB
         setLoading(false);
       })
       .catch(err => {
@@ -39,7 +42,7 @@ export default function RestaurantProfile() {
       });
   }, []);
 
-  // ── Image handlers ──────────────────────────────────────────────────────
+  // ── Image handlers ───────────────────────────────────────────────────────
 
   const handleNewImages = (e) => {
     const files = Array.from(e.target.files);
@@ -93,6 +96,8 @@ export default function RestaurantProfile() {
       newErrors.phone = "Phone number is required";
     } else if (!/^\d{10}$/.test(form.phone)) {
       newErrors.phone = "Enter valid 10-digit phone number";
+    } else if (!phoneVerified) {
+      newErrors.phone = "Please verify your phone number via OTP";
     }
     if (!location || !location.lat || !location.lng) {
       newErrors.location = "Please select your restaurant location on the map";
@@ -108,7 +113,6 @@ export default function RestaurantProfile() {
 
     setSaving(true);
     try {
-      // Always use FormData so we can optionally attach new images
       const formData = new FormData();
       formData.append("name", form.name);
       formData.append("address", form.address);
@@ -123,7 +127,6 @@ export default function RestaurantProfile() {
 
       setRestaurant(res.data);
       setExistingImages(res.data.images || []);
-      // Clear new images after save
       newPreviews.forEach(url => URL.revokeObjectURL(url));
       setNewImages([]);
       setNewPreviews([]);
@@ -200,7 +203,10 @@ export default function RestaurantProfile() {
               type="text"
               placeholder="Enter restaurant name"
               value={form.name}
-              onChange={e => { setForm({ ...form, name: e.target.value }); if (errors.name) setErrors({ ...errors, name: "" }); }}
+              onChange={e => {
+                setForm({ ...form, name: e.target.value });
+                if (errors.name) setErrors({ ...errors, name: "" });
+              }}
               style={{ ...styles.input, ...(errors.name ? styles.inputError : {}) }}
             />
             {errors.name && <span style={styles.errorText}>{errors.name}</span>}
@@ -212,25 +218,42 @@ export default function RestaurantProfile() {
             <textarea
               placeholder="Enter complete address"
               value={form.address}
-              onChange={e => { setForm({ ...form, address: e.target.value }); if (errors.address) setErrors({ ...errors, address: "" }); }}
+              onChange={e => {
+                setForm({ ...form, address: e.target.value });
+                if (errors.address) setErrors({ ...errors, address: "" });
+              }}
               style={{ ...styles.textarea, ...(errors.address ? styles.inputError : {}) }}
               rows={3}
             />
             {errors.address && <span style={styles.errorText}>{errors.address}</span>}
           </div>
 
-          {/* Phone */}
+          {/* Phone + OTP Verification */}
           <div style={styles.inputGroup}>
             <label style={styles.inputLabel}>Phone Number *</label>
             <input
               type="tel"
               placeholder="Enter 10-digit phone number"
               value={form.phone}
-              onChange={e => { setForm({ ...form, phone: e.target.value }); if (errors.phone) setErrors({ ...errors, phone: "" }); }}
+              onChange={e => {
+                setForm({ ...form, phone: e.target.value });
+                setPhoneVerified(false); // reset if phone changes
+                if (errors.phone) setErrors({ ...errors, phone: "" });
+              }}
               style={{ ...styles.input, ...(errors.phone ? styles.inputError : {}) }}
               maxLength={10}
             />
             {errors.phone && <span style={styles.errorText}>{errors.phone}</span>}
+
+            {/* ✅ OTP Verification Component */}
+            <PhoneVerification
+              phone={form.phone}
+              isVerified={phoneVerified}
+              onVerified={(verifiedPhone) => {
+                setPhoneVerified(true);
+                setForm(prev => ({ ...prev, phone: verifiedPhone }));
+              }}
+            />
           </div>
 
           {/* ── IMAGE MANAGEMENT SECTION ── */}
@@ -291,7 +314,7 @@ export default function RestaurantProfile() {
               </div>
             )}
 
-            {/* Upload box — only show if under 5 */}
+            {/* Upload box */}
             {totalImages < 5 && (
               <div
                 style={styles.uploadBox}
@@ -419,8 +442,6 @@ const styles = {
   textarea: { width: "100%", padding: "14px 16px", fontSize: "15px", border: "2px solid #e9ecef", borderRadius: "12px", outline: "none", transition: "all 0.2s", backgroundColor: "#f8f9fa", color: "#2d3748", boxSizing: "border-box", fontFamily: "inherit", resize: "vertical" },
   inputError: { borderColor: "#dc3545", backgroundColor: "#fff5f5" },
   errorText: { display: "block", color: "#dc3545", fontSize: "12px", marginTop: "6px", marginLeft: "4px" },
-
-  // Image section
   imageSection: { marginTop: "28px", paddingTop: "24px", borderTop: "2px solid #e9ecef" },
   imgGroupLabel: { fontSize: "12px", fontWeight: "600", color: "#6c757d", textTransform: "uppercase", letterSpacing: "0.5px", margin: "0 0 10px 0" },
   previewGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: "10px", marginBottom: "4px" },
@@ -437,7 +458,6 @@ const styles = {
   uploadSubText: { fontSize: "12px", color: "#6c757d", margin: 0 },
   maxReachedNote: { padding: "12px 16px", backgroundColor: "#d4edda", borderRadius: "8px", fontSize: "13px", color: "#155724", fontWeight: "500", marginTop: "8px" },
   noImagesWarning: { padding: "12px 16px", backgroundColor: "#fff3cd", borderRadius: "8px", fontSize: "13px", color: "#856404", marginTop: "8px" },
-
   locationSection: { marginTop: "32px", paddingTop: "24px", borderTop: "2px solid #e9ecef" },
   locationHelp: { fontSize: "13px", color: "#6c757d", margin: "0 0 16px 0", lineHeight: "1.5" },
   locationStatus: { display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", padding: "12px", backgroundColor: "#d4edda", borderRadius: "8px" },
