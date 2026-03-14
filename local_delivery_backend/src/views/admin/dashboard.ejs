@@ -1,85 +1,542 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Admin Dashboard</title>
-  <style>
-    body{background:#0f0f0f;color:#e5e5e5;font-family:monospace;padding:24px;margin:0}
-    h1{color:#f97316} h2{color:#fb923c;border-bottom:1px solid #333;padding-bottom:8px;margin-top:40px}
-    .stats{display:flex;gap:16px;margin-bottom:32px;flex-wrap:wrap}
-    .card{background:#1a1a1a;padding:20px 28px;border-radius:10px;min-width:160px}
-    .card h3{margin:0;color:#f97316;font-size:28px}
-    .card p{margin:4px 0 0;color:#888;font-size:13px}
-    table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
-    th{background:#1f1f1f;color:#f97316;padding:10px;text-align:left}
-    td{padding:8px 10px;border-bottom:1px solid #222}
-    tr:hover td{background:#1a1a1a}
-    .badge{padding:2px 8px;border-radius:20px;font-size:11px;color:white}
-    .PLACED{background:#1d4ed8}.CONFIRMED{background:#065f46}.PREPARING{background:#92400e}
-    .OUT_FOR_DELIVERY{background:#6d28d9}.DELIVERED{background:#14532d}.CANCELLED{background:#7f1d1d}
-    a.logout{color:#f97316;text-decoration:none;float:right;margin-top:8px}
-  </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Admin — Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0c0c0d;
+    --surface:  #141416;
+    --border:   #222226;
+    --muted:    #52525b;
+    --text:     #e4e4e7;
+    --sub:      #71717a;
+    --accent:   #f97316;
+    --accent2:  #fb923c;
+    --danger:   #ef4444;
+    --success:  #22c55e;
+    --warn:     #eab308;
+    --info:     #3b82f6;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', 'Fira Mono', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ── layout ── */
+  .shell { display: flex; min-height: 100vh; }
+
+  .sidebar {
+    width: 200px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 24px 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .sidebar-logo {
+    padding: 0 20px 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+  .sidebar-logo span { color: var(--accent); font-weight: 700; font-size: 15px; letter-spacing: .05em; }
+  .sidebar-logo small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 20px; cursor: pointer;
+    color: var(--sub); font-size: 12px; font-weight: 600;
+    text-decoration: none; border: none; background: none;
+    letter-spacing: .04em; text-transform: uppercase;
+    transition: color .15s, background .15s;
+    width: 100%; text-align: left;
+  }
+  .nav-item:hover, .nav-item.active { color: var(--text); background: rgba(249,115,22,.06); }
+  .nav-item .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+  .sidebar-footer { margin-top: auto; padding: 20px; border-top: 1px solid var(--border); }
+
+  .main { flex: 1; padding: 32px; overflow-x: auto; }
+
+  .page-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 28px;
+  }
+  .page-head h1 { font-size: 18px; font-weight: 700; color: var(--accent); letter-spacing: -.2px; }
+  .page-head small { color: var(--muted); font-size: 11px; display: block; margin-top: 2px; }
+
+  /* ── stats ── */
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 36px; }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px;
+    position: relative; overflow: hidden;
+  }
+  .stat-val { font-size: 26px; font-weight: 800; color: var(--text); letter-spacing: -.5px; }
+  .stat-lbl { font-size: 11px; color: var(--sub); margin-top: 3px; text-transform: uppercase; letter-spacing: .06em; }
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .stat-accent { border-top: 2px solid var(--accent); }
+  .stat-green  { border-top: 2px solid var(--success); }
+  .stat-blue   { border-top: 2px solid var(--info); }
+  .stat-red    { border-top: 2px solid var(--danger); }
+
+  /* ── section ── */
+  .section { margin-bottom: 48px; }
+  .section-head {
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 16px;
+  }
+  .section-head h2 { font-size: 14px; font-weight: 700; color: var(--accent2); letter-spacing: .02em; }
+  .section-head small { color: var(--muted); font-size: 11px; }
+
+  /* ── table ── */
+  .tbl-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead th {
+    background: var(--surface); color: var(--sub);
+    padding: 10px 12px; text-align: left;
+    font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; font-size: 10px;
+    white-space: nowrap; border-bottom: 1px solid var(--border);
+  }
+  tbody td { padding: 9px 12px; border-bottom: 1px solid #191919; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #16161a; }
+
+  /* ── badges ── */
+  .badge {
+    display: inline-flex; align-items: center;
+    padding: 2px 8px; border-radius: 99px;
+    font-size: 10px; font-weight: 700;
+    letter-spacing: .04em; white-space: nowrap;
+  }
+  .b-placed        { background: #1d3a7a22; color: #3b82f6; border: 1px solid #1d4ed830; }
+  .b-confirmed     { background: #16532222; color: #22c55e; border: 1px solid #16532230; }
+  .b-preparing     { background: #7c2d1222; color: #fb923c; border: 1px solid #7c2d1230; }
+  .b-out           { background: #312e8122; color: #a78bfa; border: 1px solid #312e8130; }
+  .b-delivered     { background: #14532d22; color: #4ade80; border: 1px solid #14532d30; }
+  .b-cancelled     { background: #7f1d1d22; color: #f87171; border: 1px solid #7f1d1d30; }
+  .b-hidden        { background: #3f3f4622; color: #a1a1aa; border: 1px solid #3f3f4630; }
+  .b-visible       { background: #14532d22; color: #4ade80; border: 1px solid #14532d30; }
+  .b-banned        { background: #7f1d1d22; color: #f87171; border: 1px solid #7f1d1d30; }
+  .b-active        { background: #14532d22; color: #4ade80; border: 1px solid #14532d30; }
+  .b-owner         { background: #451a0322; color: #fb923c; border: 1px solid #92400e30; }
+  .b-user          { background: #1e293b22; color: #94a3b8; border: 1px solid #1e293b30; }
+  .b-unavail       { background: #3f3f4622; color: #a1a1aa; border: 1px solid #3f3f4630; }
+  .b-avail         { background: #14532d22; color: #4ade80; border: 1px solid #14532d30; }
+
+  /* ── inline forms / buttons ── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 10px; border-radius: 6px; border: none;
+    font-family: inherit; font-size: 11px; font-weight: 700;
+    cursor: pointer; white-space: nowrap;
+    transition: opacity .15s, transform .1s;
+    letter-spacing: .03em;
+  }
+  .btn:hover  { opacity: .8; transform: translateY(-1px); }
+  .btn:active { opacity: 1; transform: translateY(0); }
+
+  .btn-ghost  { background: transparent; color: var(--sub);    border: 1px solid var(--border); }
+  .btn-danger { background: #7f1d1d33;   color: var(--danger); border: 1px solid #7f1d1d55; }
+  .btn-warn   { background: #78350f33;   color: var(--warn);   border: 1px solid #78350f55; }
+  .btn-green  { background: #14532d33;   color: var(--success);border: 1px solid #14532d55; }
+  .btn-blue   { background: #1e3a5f33;   color: var(--info);   border: 1px solid #1e3a5f55; }
+  .btn-accent { background: var(--accent); color: #000; border: none; }
+
+  .inline-form { display: inline; }
+
+  .actions { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+
+  select.role-select {
+    background: #1a1a1a; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 6px; font-family: inherit; font-size: 11px;
+    cursor: pointer; outline: none;
+  }
+  select.role-select:focus { border-color: var(--accent); }
+
+  select.status-select {
+    background: #1a1a1a; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 6px; font-family: inherit; font-size: 11px;
+    cursor: pointer; outline: none;
+  }
+
+  /* ── logout btn ── */
+  .logout-btn {
+    display: block; width: 100%;
+    background: transparent; color: var(--danger);
+    border: 1px solid #7f1d1d44; border-radius: 7px;
+    padding: 7px; font-family: inherit; font-size: 11px;
+    font-weight: 700; cursor: pointer; letter-spacing: .04em;
+    text-transform: uppercase; transition: background .15s;
+  }
+  .logout-btn:hover { background: #7f1d1d22; }
+
+  /* ── pill counts ── */
+  .cnt { display: inline-block; background: #222; color: var(--muted); border-radius: 99px; padding: 0 6px; font-size: 10px; margin-left: 4px; }
+
+  /* ── search/filter bar ── */
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-bar input {
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px;
+    padding: 6px 10px; font-family: inherit; font-size: 12px;
+    outline: none; width: 240px;
+  }
+  .filter-bar input:focus { border-color: var(--accent); }
+
+  /* ── row highlight ── */
+  .row-hidden td { opacity: .45; }
+  .row-banned td { opacity: .5; }
+
+  /* ── responsive ── */
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .main { padding: 20px 14px; }
+  }
+</style>
 </head>
 <body>
-  <h1>⚡ Admin Dashboard <a class="logout" href="/admin/logout">Logout</a></h1>
+<div class="shell">
 
-  <div class="stats">
-    <div class="card"><h3><%= stats.totalUsers %></h3><p>Total Users</p></div>
-    <div class="card"><h3><%= stats.totalRestaurants %></h3><p>Restaurants</p></div>
-    <div class="card"><h3><%= stats.totalOrders %></h3><p>Orders</p></div>
-    <div class="card"><h3>₹<%= stats.totalRevenue.toFixed(0) %></h3><p>Revenue</p></div>
-  </div>
+  <!-- ── SIDEBAR ── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <span>ADMIN</span>
+      <small>Control Panel</small>
+    </div>
 
-  <h2>👥 Users (<%= users.length %>)</h2>
-  <table>
-    <tr><th>Name</th><th>Email</th><th>Role</th><th>Phone</th><th>Created</th></tr>
-    <% users.forEach(u => { %>
-    <tr>
-      <td><%= u.name||'—' %></td><td><%= u.email||'—' %></td>
-      <td><%= u.role %></td><td><%= u.phone||'—' %></td>
-      <td><%= u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-IN') : '—' %></td>
-    </tr>
-    <% }) %>
-  </table>
+    <a class="nav-item" href="#stats"><div class="dot"></div> Overview</a>
+    <a class="nav-item" href="#users"><div class="dot"></div> Users <span class="cnt"><%= users.length %></span></a>
+    <a class="nav-item" href="#restaurants"><div class="dot"></div> Restaurants <span class="cnt"><%= restaurants.length %></span></a>
+    <a class="nav-item" href="#orders"><div class="dot"></div> Orders <span class="cnt"><%= orders.length %></span></a>
+    <a class="nav-item" href="#menu"><div class="dot"></div> Menu <span class="cnt"><%= menus.length %></span></a>
 
-  <h2>🍽️ Restaurants (<%= restaurants.length %>)</h2>
-  <table>
-    <tr><th>Name</th><th>Owner</th><th>Owner Email</th><th>Address</th><th>Phone</th></tr>
-    <% restaurants.forEach(r => { %>
-    <tr>
-      <td><%= r.name||'—' %></td>
-      <td><%= r.owner?.name||'—' %></td><td><%= r.owner?.email||'—' %></td>
-      <td><%= r.address||'—' %></td><td><%= r.phone||'—' %></td>
-    </tr>
-    <% }) %>
-  </table>
+    <div class="sidebar-footer">
+      <form action="/admin/logout" method="GET">
+        <button class="logout-btn">Logout</button>
+      </form>
+    </div>
+  </aside>
 
-  <h2>📦 Orders (<%= orders.length %>)</h2>
-  <table>
-    <tr><th>User</th><th>Restaurant</th><th>Items</th><th>Total</th><th>Status</th><th>Date</th></tr>
-    <% orders.forEach(o => { %>
-    <tr>
-      <td><%= o.user?.name||'—' %></td>
-      <td><%= o.restaurant?.name||'—' %></td>
-      <td><%= o.items?.length||0 %> items</td>
-      <td>₹<%= o.total %></td>
-      <td><span class="badge <%= o.status %>"><%= o.status %></span></td>
-      <td><%= new Date(o.orderDate).toLocaleDateString('en-IN') %></td>
-    </tr>
-    <% }) %>
-  </table>
+  <!-- ── MAIN ── -->
+  <main class="main">
+    <div class="page-head">
+      <div>
+        <h1>Dashboard</h1>
+        <small>Last loaded: <%= new Date().toLocaleString('en-IN') %></small>
+      </div>
+      <a href="/admin/dashboard" class="btn btn-ghost">Refresh</a>
+    </div>
 
-  <h2>🍕 Menu Items (<%= menus.length %>)</h2>
-  <table>
-    <tr><th>Name</th><th>Restaurant</th><th>Price</th><th>Veg</th><th>Available</th><th>Bestseller</th></tr>
-    <% menus.forEach(m => { %>
-    <tr>
-      <td><%= m.name %></td><td><%= m.restaurant?.name||'—' %></td>
-      <td>₹<%= m.price %></td>
-      <td><%= m.isVeg?'🟢 Veg':'🔴 Non-Veg' %></td>
-      <td><%= m.isAvailable?'✅':'❌' %></td>
-      <td><%= m.isBestSeller?'⭐':'—' %></td>
-    </tr>
-    <% }) %>
-  </table>
+    <!-- ── STATS ── -->
+    <div id="stats" class="stats">
+      <div class="stat stat-accent">
+        <div class="stat-val"><%= stats.totalUsers %></div>
+        <div class="stat-lbl">Total Users</div>
+        <div class="stat-sub"><%= stats.bannedUsers %> banned</div>
+      </div>
+      <div class="stat stat-blue">
+        <div class="stat-val"><%= stats.totalRestaurants %></div>
+        <div class="stat-lbl">Restaurants</div>
+        <div class="stat-sub"><%= stats.hiddenRestaurants %> hidden</div>
+      </div>
+      <div class="stat stat-accent">
+        <div class="stat-val"><%= stats.activeOrders %></div>
+        <div class="stat-lbl">Active Orders</div>
+        <div class="stat-sub"><%= stats.pendingOrders %> pending confirm</div>
+      </div>
+      <div class="stat stat-green">
+        <div class="stat-val">&#8377;<%= stats.totalRevenue.toFixed(0) %></div>
+        <div class="stat-lbl">Total Revenue</div>
+        <div class="stat-sub">&#8377;<%= stats.todayRevenue.toFixed(0) %> today</div>
+      </div>
+      <div class="stat stat-blue">
+        <div class="stat-val"><%= stats.totalOrders %></div>
+        <div class="stat-lbl">All Orders</div>
+        <div class="stat-sub"><%= stats.todayOrders %> today</div>
+      </div>
+      <div class="stat">
+        <div class="stat-val"><%= stats.availableMenuItems %></div>
+        <div class="stat-lbl">Menu Items</div>
+        <div class="stat-sub"><%= stats.totalMenuItems - stats.availableMenuItems %> unavailable</div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- USERS                                      -->
+    <!-- ══════════════════════════════════════════ -->
+    <section id="users" class="section">
+      <div class="section-head">
+        <h2>Users</h2>
+        <small><%= users.length %> total &middot; <%= stats.bannedUsers %> banned</small>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Phone</th>
+              <th>Status</th>
+              <th>Joined</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% users.forEach(u => { %>
+            <tr class="<%= u.isBanned ? 'row-banned' : '' %>">
+              <td><%= u.name || '—' %></td>
+              <td><%= u.email || '—' %></td>
+              <td>
+                <span class="badge <%= u.role === 'restaurant_owner' ? 'b-owner' : 'b-user' %>">
+                  <%= u.role %>
+                </span>
+              </td>
+              <td><%= u.phone || '—' %></td>
+              <td>
+                <% if (u.isBanned) { %>
+                  <span class="badge b-banned">Banned</span>
+                <% } else { %>
+                  <span class="badge b-active">Active</span>
+                <% } %>
+              </td>
+              <td><%= u.createdAt ? new Date(u.createdAt).toLocaleDateString('en-IN') : '—' %></td>
+              <td>
+                <div class="actions">
+                  <% if (!u.isBanned) { %>
+                  <form class="inline-form" action="/admin/users/<%= u._id %>/ban" method="POST">
+                    <button class="btn btn-danger">Ban</button>
+                  </form>
+                  <% } else { %>
+                  <form class="inline-form" action="/admin/users/<%= u._id %>/unban" method="POST">
+                    <button class="btn btn-green">Unban</button>
+                  </form>
+                  <% } %>
+
+                  <!-- Change role -->
+                  <form class="inline-form" action="/admin/users/<%= u._id %>/role" method="POST" style="display:inline-flex;gap:4px;align-items:center;">
+                    <select name="role" class="role-select">
+                      <option value="user"             <%= u.role==='user'             ? 'selected':'' %>>user</option>
+                      <option value="restaurant_owner" <%= u.role==='restaurant_owner' ? 'selected':'' %>>owner</option>
+                      <option value="admin"            <%= u.role==='admin'            ? 'selected':'' %>>admin</option>
+                    </select>
+                    <button class="btn btn-ghost">Set</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- RESTAURANTS                                -->
+    <!-- ══════════════════════════════════════════ -->
+    <section id="restaurants" class="section">
+      <div class="section-head">
+        <h2>Restaurants</h2>
+        <small><%= restaurants.length %> total &middot; <%= stats.hiddenRestaurants %> hidden</small>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Owner</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Address</th>
+              <th>Visibility</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% restaurants.forEach(r => { %>
+            <tr class="<%= r.isHidden ? 'row-hidden' : '' %>">
+              <td><strong><%= r.name || '—' %></strong></td>
+              <td><%= r.owner?.name || '—' %></td>
+              <td><%= r.owner?.email || '—' %></td>
+              <td><%= r.phone || '—' %></td>
+              <td><%= r.address || '—' %></td>
+              <td>
+                <% if (r.isHidden) { %>
+                  <span class="badge b-hidden">Hidden</span>
+                <% } else { %>
+                  <span class="badge b-visible">Visible</span>
+                <% } %>
+              </td>
+              <td>
+                <div class="actions">
+                  <% if (!r.isHidden) { %>
+                  <form class="inline-form" action="/admin/restaurants/<%= r._id %>/hide" method="POST">
+                    <button class="btn btn-warn">Hide</button>
+                  </form>
+                  <% } else { %>
+                  <form class="inline-form" action="/admin/restaurants/<%= r._id %>/unhide" method="POST">
+                    <button class="btn btn-green">Unhide</button>
+                  </form>
+                  <% } %>
+                </div>
+              </td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- ORDERS                                     -->
+    <!-- ══════════════════════════════════════════ -->
+    <section id="orders" class="section">
+      <div class="section-head">
+        <h2>Orders</h2>
+        <small><%= orders.length %> total &middot; <%= stats.activeOrders %> active</small>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Order ID</th>
+              <th>Customer</th>
+              <th>Restaurant</th>
+              <th>Items</th>
+              <th>Total</th>
+              <th>Status</th>
+              <th>Date</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% orders.forEach(o => { %>
+            <tr>
+              <td><code style="color:var(--muted);font-size:11px">#<%= o._id.toString().slice(-8).toUpperCase() %></code></td>
+              <td><%= o.user?.name || o.user?.email || '—' %></td>
+              <td><%= o.restaurant?.name || '—' %></td>
+              <td style="color:var(--muted)"><%= o.items?.length || 0 %> items</td>
+              <td>&#8377;<%= (o.total || 0).toFixed(0) %></td>
+              <td>
+                <%
+                  const sClass = {
+                    PLACED:'b-placed', CONFIRMED:'b-confirmed',
+                    PREPARING:'b-preparing', OUT_FOR_DELIVERY:'b-out',
+                    DELIVERED:'b-delivered', CANCELLED:'b-cancelled'
+                  }[o.status] || '';
+                %>
+                <span class="badge <%= sClass %>"><%= o.status.replace('_',' ') %></span>
+              </td>
+              <td style="color:var(--muted)"><%= new Date(o.orderDate).toLocaleDateString('en-IN') %></td>
+              <td>
+                <div class="actions">
+                  <!-- Force status change -->
+                  <form class="inline-form" action="/admin/orders/<%= o._id %>/status" method="POST" style="display:inline-flex;gap:4px;align-items:center;">
+                    <select name="status" class="status-select">
+                      <% ['PLACED','CONFIRMED','PREPARING','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'].forEach(st => { %>
+                      <option value="<%= st %>" <%= o.status===st?'selected':'' %>><%= st.replace('_',' ') %></option>
+                      <% }) %>
+                    </select>
+                    <button class="btn btn-blue">Set</button>
+                  </form>
+                  <!-- Delete order -->
+                  <form class="inline-form" action="/admin/orders/<%= o._id %>/delete" method="POST" onsubmit="return confirm('Delete this order permanently?')">
+                    <button class="btn btn-danger">Delete</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- MENU ITEMS                                 -->
+    <!-- ══════════════════════════════════════════ -->
+    <section id="menu" class="section">
+      <div class="section-head">
+        <h2>Menu Items</h2>
+        <small><%= menus.length %> total &middot; <%= stats.availableMenuItems %> available</small>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Restaurant</th>
+              <th>Price</th>
+              <th>Type</th>
+              <th>Available</th>
+              <th>Bestseller</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% menus.forEach(m => { %>
+            <tr>
+              <td><strong><%= m.name %></strong></td>
+              <td><%= m.restaurant?.name || '—' %></td>
+              <td>&#8377;<%= m.price %></td>
+              <td>
+                <span class="badge" style="<%= m.isVeg ? 'background:#14532d22;color:#4ade80;border:1px solid #14532d30' : 'background:#7f1d1d22;color:#f87171;border:1px solid #7f1d1d30' %>">
+                  <%= m.isVeg ? 'Veg' : 'Non-Veg' %>
+                </span>
+              </td>
+              <td>
+                <span class="badge <%= m.isAvailable ? 'b-avail' : 'b-unavail' %>">
+                  <%= m.isAvailable ? 'Available' : 'Unavailable' %>
+                </span>
+              </td>
+              <td>
+                <% if (m.isBestSeller) { %>
+                  <span class="badge" style="background:#78350f22;color:#fbbf24;border:1px solid #78350f30">Bestseller</span>
+                <% } else { %>
+                  <span style="color:var(--muted)">—</span>
+                <% } %>
+              </td>
+              <td>
+                <div class="actions">
+                  <form class="inline-form" action="/admin/menu/<%= m._id %>/toggle" method="POST">
+                    <button class="btn <%= m.isAvailable ? 'btn-warn' : 'btn-green' %>">
+                      <%= m.isAvailable ? 'Disable' : 'Enable' %>
+                    </button>
+                  </form>
+                  <form class="inline-form" action="/admin/menu/<%= m._id %>/delete" method="POST" onsubmit="return confirm('Delete this menu item?')">
+                    <button class="btn btn-danger">Delete</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+</div>
 </body>
 </html>
