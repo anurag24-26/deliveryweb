@@ -2,568 +2,483 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import {
-  Package,
-  Clock,
-  CheckCircle,
-  XCircle,
-  Truck,
-  ChefHat,
-  MapPin,
-  Bell,
-  BellOff,
-  Volume2,
-  VolumeX,
-  RefreshCw,
-  Wifi,
-  WifiOff,
+  Package, Clock, CheckCircle, XCircle, Truck, ChefHat,
+  MapPin, Bell, BellOff, Volume2, VolumeX, RefreshCw, Wifi, WifiOff,
 } from "lucide-react";
 
-// ─── Notification helpers ──────────────────────────────────────────────────
-
-/** Request browser notification permission */
-async function requestNotificationPermission() {
-  if (!("Notification" in window)) return "unsupported";
-  if (Notification.permission === "granted") return "granted";
-  if (Notification.permission === "denied") return "denied";
-  const result = await Notification.requestPermission();
-  return result;
+// ─── Audio ─────────────────────────────────────────────────────────────────
+// Single shared AudioContext – avoids browser autoplay blocks
+let _audioCtx = null;
+function getAudioCtx() {
+  if (!_audioCtx || _audioCtx.state === "closed")
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (_audioCtx.state === "suspended") _audioCtx.resume();
+  return _audioCtx;
 }
 
-/** Show a browser push notification */
-function showBrowserNotification(title, options = {}) {
-  if (!("Notification" in window) || Notification.permission !== "granted") return null;
+const SOUND_PATTERNS = {
+  new_order:     [{ f:523,t:0 },{ f:659,t:0.15 },{ f:784,t:0.30 }],
+  confirmed:     [{ f:440,t:0 },{ f:550,t:0.15 }],
+  preparing:     [{ f:392,t:0 },{ f:494,t:0.12 },{ f:587,t:0.24 }],
+  out_delivery:  [{ f:659,t:0 },{ f:784,t:0.12 },{ f:988,t:0.24 }],
+  delivered:     [{ f:523,t:0 },{ f:659,t:0.10 },{ f:784,t:0.20 },{ f:1047,t:0.30 }],
+  cancelled:     [{ f:400,t:0 },{ f:300,t:0.22 }],
+  status_update: [{ f:440,t:0 },{ f:550,t:0.15 }],
+};
 
-  const notification = new Notification(title, {
-    icon: "https://cdn-icons-png.flaticon.com/512/3075/3075977.png",
-    badge: "https://cdn-icons-png.flaticon.com/512/3075/3075977.png",
-    requireInteraction: true,       // stays until user dismisses
-    renotify: true,
-    tag: options.tag || "order-notification",
-    silent: false,
-    vibrate: [200, 100, 200],       // mobile vibration pattern
-    ...options,
-  });
-
-  notification.onclick = () => {
-    window.focus();
-    notification.close();
-    if (options.url) window.location.href = options.url;
-  };
-
-  return notification;
-}
-
-/** Play a notification chime using Web Audio API */
-function playNotificationSound(type = "new_order") {
+function playSound(type) {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-    const patterns = {
-      new_order: [
-        { freq: 523.25, start: 0,    dur: 0.15 },
-        { freq: 659.25, start: 0.15, dur: 0.15 },
-        { freq: 783.99, start: 0.30, dur: 0.25 },
-      ],
-      status_update: [
-        { freq: 440,    start: 0,    dur: 0.12 },
-        { freq: 550,    start: 0.15, dur: 0.20 },
-      ],
-      cancelled: [
-        { freq: 400,    start: 0,    dur: 0.20 },
-        { freq: 300,    start: 0.22, dur: 0.25 },
-      ],
-    };
-
-    const notes = patterns[type] || patterns.new_order;
-    notes.forEach(({ freq, start, dur }) => {
-      const osc = ctx.createOscillator();
+    const ctx   = getAudioCtx();
+    const notes = SOUND_PATTERNS[type] || SOUND_PATTERNS.status_update;
+    notes.forEach(({ f, t }) => {
+      const osc  = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+      osc.connect(gain); gain.connect(ctx.destination);
       osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
-      gain.gain.setValueAtTime(0.4, ctx.currentTime + start);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
-      osc.start(ctx.currentTime + start);
-      osc.stop(ctx.currentTime + start + dur + 0.05);
+      osc.frequency.setValueAtTime(f, ctx.currentTime + t);
+      gain.gain.setValueAtTime(0.4, ctx.currentTime + t);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.25);
+      osc.start(ctx.currentTime + t);
+      osc.stop(ctx.currentTime + t + 0.30);
     });
-  } catch (e) {
-    console.warn("Audio playback failed:", e);
-  }
+  } catch (e) { console.warn("Audio error:", e); }
 }
 
-// ─── Toast component ──────────────────────────────────────────────────────
+// ─── Browser notifications ─────────────────────────────────────────────────
+async function requestPermission() {
+  if (!("Notification" in window)) return "unsupported";
+  if (Notification.permission !== "default") return Notification.permission;
+  return Notification.requestPermission();
+}
 
-function Toast({ toasts, onDismiss }) {
+function pushNotif(title, body, tag, url) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const n = new Notification(title, {
+    body,
+    icon:  "https://cdn-icons-png.flaticon.com/512/3075/3075977.png",
+    badge: "https://cdn-icons-png.flaticon.com/512/3075/3075977.png",
+    tag, renotify: true, requireInteraction: false,
+    vibrate: [200, 100, 200],
+  });
+  n.onclick = () => { window.focus(); n.close(); if (url) window.location.href = url; };
+}
+
+// ─── Status config ─────────────────────────────────────────────────────────
+const STATUS = {
+  PLACED:           { color:"#3b82f6", label:"Order Placed",     emoji:"🛒",  sound:"new_order",    icon:<Clock size={18}/> },
+  CONFIRMED:        { color:"#8b5cf6", label:"Confirmed",        emoji:"✅",  sound:"confirmed",    icon:<CheckCircle size={18}/> },
+  PREPARING:        { color:"#f59e0b", label:"Preparing",        emoji:"👨‍🍳", sound:"preparing",   icon:<ChefHat size={18}/> },
+  OUT_FOR_DELIVERY: { color:"#10b981", label:"Out for Delivery", emoji:"🚗",  sound:"out_delivery", icon:<Truck size={18}/> },
+  DELIVERED:        { color:"#059669", label:"Delivered",        emoji:"📦",  sound:"delivered",    icon:<Package size={18}/> },
+  CANCELLED:        { color:"#ef4444", label:"Cancelled",        emoji:"❌",  sound:"cancelled",    icon:<XCircle size={18}/> },
+};
+const cfg = (key) => STATUS[key] || { color:"#6c757d", label:key, emoji:"🔔", sound:"status_update", icon:<Clock size={18}/> };
+
+// ─── Mini step tracker ─────────────────────────────────────────────────────
+const STEPS = ["PLACED","CONFIRMED","PREPARING","OUT_FOR_DELIVERY","DELIVERED"];
+function MiniTracker({ status }) {
+  const idx = STEPS.indexOf(status);
+  if (status === "CANCELLED" || idx < 0) return null;
+  const c = cfg(status);
   return (
-    <div style={toastStyles.container}>
-      {toasts.map((t) => (
-        <div
-          key={t.id}
-          style={{
-            ...toastStyles.toast,
-            borderLeft: `4px solid ${t.color || "#10b981"}`,
-            animation: "slideIn 0.3s ease",
-          }}
-        >
-          <div style={toastStyles.icon}>{t.icon}</div>
-          <div style={toastStyles.body}>
-            <p style={toastStyles.title}>{t.title}</p>
-            {t.message && <p style={toastStyles.message}>{t.message}</p>}
+    <div style={{ display:"flex", alignItems:"center", gap:0, marginTop:12, padding:"12px 14px", backgroundColor:c.color+"10", borderRadius:12 }}>
+      {STEPS.map((step, i) => {
+        const sc = cfg(step);
+        const done = i <= idx, active = i === idx;
+        return (
+          <div key={step} style={{ display:"flex", alignItems:"center", flex: i < STEPS.length-1 ? 1 : "none" }}>
+            <div title={sc.label} style={{
+              width:active?32:24, height:active?32:24, borderRadius:"50%",
+              backgroundColor: done ? c.color : "#e5e7eb",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize: active ? 14 : 11, flexShrink:0,
+              transition:"all 0.4s ease",
+              boxShadow: active ? `0 0 0 3px ${c.color}30` : "none", zIndex:1,
+            }}>
+              {done ? <span>{sc.emoji}</span> : <div style={{ width:6, height:6, borderRadius:"50%", backgroundColor:"#d1d5db" }}/>}
+            </div>
+            {i < STEPS.length-1 && (
+              <div style={{ flex:1, height:3, backgroundColor: i < idx ? c.color : "#e5e7eb", borderRadius:2, margin:"0 3px", transition:"background-color 0.5s ease" }}/>
+            )}
           </div>
-          <button style={toastStyles.close} onClick={() => onDismiss(t.id)}>
-            ×
-          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Toast stack ───────────────────────────────────────────────────────────
+function Toasts({ list, dismiss }) {
+  return (
+    <div style={{ position:"fixed", top:20, right:20, zIndex:9999, display:"flex", flexDirection:"column", gap:10, maxWidth:370, width:"calc(100vw - 40px)", pointerEvents:"none" }}>
+      {list.map(t => (
+        <div key={t.id} style={{ display:"flex", alignItems:"flex-start", gap:12, backgroundColor:"white", borderRadius:16, padding:"14px 16px", boxShadow:"0 12px 40px rgba(0,0,0,0.18)", borderLeft:`4px solid ${t.color}`, animation:"toastSlide 0.35s cubic-bezier(0.34,1.56,0.64,1)", pointerEvents:"all" }}>
+          <span style={{ fontSize:22, flexShrink:0 }}>{t.emoji}</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            <p style={{ margin:0, fontSize:14, fontWeight:700, color:"#1a202c" }}>{t.title}</p>
+            {t.msg && <p style={{ margin:"4px 0 0", fontSize:13, color:"#6c757d", lineHeight:1.5 }}>{t.msg}</p>}
+          </div>
+          <button onClick={() => dismiss(t.id)} style={{ background:"none", border:"none", fontSize:20, color:"#9ca3af", cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0 }}>×</button>
         </div>
       ))}
     </div>
   );
 }
 
-const toastStyles = {
-  container: {
-    position: "fixed",
-    top: "20px",
-    right: "20px",
-    zIndex: 9999,
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-    maxWidth: "360px",
-    width: "calc(100vw - 40px)",
-  },
-  toast: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: "12px",
-    backgroundColor: "white",
-    borderRadius: "14px",
-    padding: "14px 16px",
-    boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
-  },
-  icon: { fontSize: "22px", flexShrink: 0, marginTop: "1px" },
-  body: { flex: 1, minWidth: 0 },
-  title: { margin: 0, fontSize: "14px", fontWeight: "700", color: "#1a202c" },
-  message: { margin: "4px 0 0", fontSize: "13px", color: "#6c757d", lineHeight: "1.4" },
-  close: {
-    background: "none",
-    border: "none",
-    fontSize: "20px",
-    color: "#6c757d",
-    cursor: "pointer",
-    padding: "0 2px",
-    lineHeight: 1,
-    flexShrink: 0,
-  },
-};
-
-// ─── Status helpers ────────────────────────────────────────────────────────
-
-const STATUS_META = {
-  PLACED:           { color: "#3b82f6", text: "Order Placed",       icon: <Clock size={20} />,       toast: "🛒",  sound: "new_order"    },
-  CONFIRMED:        { color: "#8b5cf6", text: "Confirmed",          icon: <CheckCircle size={20} />, toast: "✅",  sound: "status_update" },
-  PREPARING:        { color: "#f59e0b", text: "Preparing",          icon: <ChefHat size={20} />,     toast: "👨‍🍳", sound: "status_update" },
-  OUT_FOR_DELIVERY: { color: "#10b981", text: "Out for Delivery",   icon: <Truck size={20} />,       toast: "🚗",  sound: "status_update" },
-  DELIVERED:        { color: "#059669", text: "Delivered",          icon: <Package size={20} />,     toast: "📦",  sound: "status_update" },
-  CANCELLED:        { color: "#ef4444", text: "Cancelled",          icon: <XCircle size={20} />,     toast: "❌",  sound: "cancelled"     },
-};
-
-function getMeta(status) {
-  return STATUS_META[status] || { color: "#6c757d", text: status, icon: <Clock size={20} />, toast: "🔔", sound: "new_order" };
-}
-
-// ─── Main Component ────────────────────────────────────────────────────────
-
+// ─── Main component ────────────────────────────────────────────────────────
 export default function Orders() {
   const navigate = useNavigate();
 
-  const [orders, setOrders]                   = useState([]);
-  const [loading, setLoading]                 = useState(true);
-  const [filter, setFilter]                   = useState("ALL");
-  const [toasts, setToasts]                   = useState([]);
-  const [notifPermission, setNotifPermission] = useState(Notification?.permission || "default");
-  const [soundEnabled, setSoundEnabled]       = useState(true);
-  const [polling, setPolling]                 = useState(true);
-  const [lastChecked, setLastChecked]         = useState(null);
-  const [isOnline, setIsOnline]               = useState(navigator.onLine);
+  const [orders,          setOrders]          = useState([]);
+  const [loading,         setLoading]         = useState(true);
+  const [filter,          setFilter]          = useState("ALL");
+  const [toasts,          setToasts]          = useState([]);
+  const [notifPerm,       setNotifPerm]       = useState(() => typeof Notification !== "undefined" ? Notification.permission : "default");
+  const [soundOn,         setSoundOn]         = useState(true);
+  const [pollingOn,       setPollingOn]       = useState(true);
+  const [lastChecked,     setLastChecked]     = useState(null);
+  const [isOnline,        setIsOnline]        = useState(navigator.onLine);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
-  // Ref to track known order IDs and statuses for diffing
-  const knownOrders = useRef({}); // { orderId: status }
-  const pollInterval = useRef(null);
-  const toastCounter = useRef(0);
+  // ── CRITICAL: use a ref for soundOn so intervals never get stale values ──
+  const soundRef    = useRef(true);
+  const knownStatus = useRef({});   // { orderId: statusString }
+  const pollRef     = useRef(null);
+  const toastSeq    = useRef(0);
+
+  useEffect(() => { soundRef.current = soundOn; }, [soundOn]);
 
   // ── Toast helpers ──────────────────────────────────────────────────────
-
-  const addToast = useCallback((title, message, color, icon) => {
-    const id = ++toastCounter.current;
-    setToasts((prev) => [...prev, { id, title, message, color, icon }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 6000);
+  const toast = useCallback((title, msg, color, emoji, ms = 6000) => {
+    const id = ++toastSeq.current;
+    setToasts(p => [...p, { id, title, msg, color, emoji }]);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), ms);
   }, []);
 
-  const dismissToast = useCallback((id) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  const dismiss = useCallback(id => setToasts(p => p.filter(t => t.id !== id)), []);
 
-  // ── Network status ─────────────────────────────────────────────────────
-
+  // ── Network ────────────────────────────────────────────────────────────
   useEffect(() => {
-    const onOnline  = () => { setIsOnline(true);  addToast("Back online", "Syncing your orders…", "#10b981", "🌐"); };
-    const onOffline = () => { setIsOnline(false); addToast("You're offline", "Orders won't refresh until reconnected.", "#ef4444", "📡"); };
-    window.addEventListener("online",  onOnline);
-    window.addEventListener("offline", onOffline);
-    return () => { window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline); };
-  }, [addToast]);
+    const up   = () => { setIsOnline(true);  toast("Back online",  "Syncing orders…",               "#10b981","🌐"); };
+    const down = () => { setIsOnline(false); toast("You're offline","Won't refresh until connected.","#ef4444","📡"); };
+    window.addEventListener("online",  up);
+    window.addEventListener("offline", down);
+    return () => { window.removeEventListener("online",up); window.removeEventListener("offline",down); };
+  }, [toast]);
 
-  // ── Permission request on mount ────────────────────────────────────────
+  // ── Permission on mount ────────────────────────────────────────────────
+  useEffect(() => { requestPermission().then(setNotifPerm); }, []);
 
+  // ── Unlock AudioContext on first user gesture ──────────────────────────
   useEffect(() => {
-    requestNotificationPermission().then(setNotifPermission);
+    const unlock = () => { try { getAudioCtx().resume(); } catch {} };
+    window.addEventListener("click", unlock, { once: true });
+    return () => window.removeEventListener("click", unlock);
   }, []);
 
-  // ── Fetch + diff logic ─────────────────────────────────────────────────
-
+  // ── Core fetch ─────────────────────────────────────────────────────────
+  // soundRef.current used instead of soundOn → no stale closure
   const fetchOrders = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const response = await axios.get(
+      const res = await axios.get(
         "https://deliverybackend-0i61.onrender.com/api/orders/my-orders",
         { withCredentials: true }
       );
+      if (!res.data.success) return;
 
-      if (response.data.success) {
-        const newOrders = response.data.orders;
-        setLastChecked(new Date());
+      const incoming    = res.data.orders;
+      const prev        = knownStatus.current;
+      const isFirstLoad = Object.keys(prev).length === 0;
 
-        // Diff against known orders
-        const prevSnapshot = knownOrders.current;
-        const isFirstLoad  = Object.keys(prevSnapshot).length === 0;
+      incoming.forEach(order => {
+        const oid   = order._id;
+        const newSt = order.status;
+        const oldSt = prev[oid];
+        const c     = cfg(newSt);
+        const rest  = order.restaurant?.name || "restaurant";
 
-        newOrders.forEach((order) => {
-          const prevStatus = prevSnapshot[order._id];
-          const currStatus = order.status;
-          const meta       = getMeta(currStatus);
-          const restName   = order.restaurant?.name || "your restaurant";
+        if (!oldSt && !isFirstLoad) {
+          // Brand-new order appeared
+          if (soundRef.current) playSound("new_order");
+          pushNotif("🛒 New Order!", `Order from ${rest} placed.`, `new-${oid}`, "/orders");
+          toast("New Order! 🛒", `From ${rest}`, "#3b82f6", "🛒", 8000);
 
-          if (!prevStatus && !isFirstLoad) {
-            // Brand-new order arrived
-            if (soundEnabled) playNotificationSound("new_order");
-            showBrowserNotification("🛒 New Order Placed!", {
-              body: `Order from ${restName} has been placed successfully.`,
-              tag: `order-new-${order._id}`,
-            });
-            addToast(
-              "New Order!",
-              `Order from ${restName} confirmed.`,
-              "#3b82f6",
-              "🛒"
-            );
-          } else if (prevStatus && prevStatus !== currStatus) {
-            // Status changed
-            if (soundEnabled) playNotificationSound(meta.sound);
+        } else if (oldSt && oldSt !== newSt) {
+          // Status changed on existing order
+          if (soundRef.current) playSound(c.sound);
+          pushNotif(`${c.emoji} ${c.label}`, `Your order from ${rest} is now: ${c.label}`, `status-${oid}`, `/order/${oid}`);
+          toast(`${c.emoji} ${c.label}`, `Your order from ${rest}`, c.color, c.emoji, 8000);
+        }
 
-            const notifTitle = `${meta.toast} Order ${meta.text}`;
-            const notifBody  = `Your order from ${restName} is now: ${meta.text}`;
+        prev[oid] = newSt;
+      });
 
-            showBrowserNotification(notifTitle, {
-              body: notifBody,
-              tag: `order-status-${order._id}`,
-              url: `/order/${order._id}`,
-            });
-            addToast(notifTitle, notifBody, meta.color, meta.toast);
-          }
+      knownStatus.current = prev;
+      setOrders(incoming);
+      setLastChecked(new Date());
 
-          // Update snapshot
-          prevSnapshot[order._id] = currStatus;
-        });
-
-        knownOrders.current = prevSnapshot;
-        setOrders(newOrders);
-      }
-    } catch (error) {
-      console.error("Error fetching orders:", error);
-      if (error.response?.status === 401) navigate("/login");
-      if (!silent) addToast("Fetch failed", "Could not load orders. Retrying…", "#ef4444", "⚠️");
+    } catch (err) {
+      console.error(err);
+      if (err.response?.status === 401) navigate("/login");
+      if (!silent) toast("Could not load orders", "Check your connection.", "#ef4444", "⚠️");
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [navigate, addToast, soundEnabled]);
+  }, [navigate, toast]); // ← soundOn intentionally NOT here; we use soundRef
 
   // Initial load
+  useEffect(() => { fetchOrders(false); }, []); // eslint-disable-line
+
+  // Background poll every 20 s
   useEffect(() => {
-    fetchOrders(false);
-  }, []);           // eslint-disable-line
+    clearInterval(pollRef.current);
+    if (pollingOn && isOnline)
+      pollRef.current = setInterval(() => fetchOrders(true), 20_000);
+    return () => clearInterval(pollRef.current);
+  }, [pollingOn, isOnline, fetchOrders]);
 
-  // Background polling every 30 seconds
-  useEffect(() => {
-    if (polling && isOnline) {
-      pollInterval.current = setInterval(() => fetchOrders(true), 30_000);
-    } else {
-      clearInterval(pollInterval.current);
-    }
-    return () => clearInterval(pollInterval.current);
-  }, [polling, isOnline, fetchOrders]);
-
-  // ── Cancel order ───────────────────────────────────────────────────────
-
+  // ── Cancel ─────────────────────────────────────────────────────────────
   const cancelOrder = async (orderId) => {
-    if (!window.confirm("Are you sure you want to cancel this order?")) return;
+    if (!window.confirm("Cancel this order?")) return;
     try {
-      const response = await axios.patch(
+      const res = await axios.patch(
         `https://deliverybackend-0i61.onrender.com/api/orders/${orderId}/cancel`,
-        {},
-        { withCredentials: true }
+        {}, { withCredentials: true }
       );
-      if (response.data.success) {
-        playNotificationSound("cancelled");
-        showBrowserNotification("❌ Order Cancelled", { body: "Your order has been cancelled.", tag: `cancel-${orderId}` });
-        addToast("Order Cancelled", "Your order was cancelled successfully.", "#ef4444", "❌");
+      if (res.data.success) {
+        if (soundRef.current) playSound("cancelled");
+        pushNotif("❌ Order Cancelled", "Your order has been cancelled.", `cancel-${orderId}`);
+        toast("Order Cancelled", "Cancelled successfully.", "#ef4444", "❌");
         fetchOrders(true);
       }
-    } catch (error) {
-      console.error("Error cancelling order:", error);
-      addToast("Cancel failed", error.response?.data?.error || "Could not cancel order.", "#ef4444", "⚠️");
+    } catch (err) {
+      toast("Cancel failed", err.response?.data?.error || "Try again.", "#ef4444", "⚠️");
     }
   };
 
-  // ── Permission button ──────────────────────────────────────────────────
-
-  const handleEnableNotifications = async () => {
-    const perm = await requestNotificationPermission();
-    setNotifPermission(perm);
-    if (perm === "granted") addToast("Notifications enabled!", "You'll be notified of order updates.", "#10b981", "🔔");
-    else if (perm === "denied") addToast("Notifications blocked", "Enable them in your browser settings.", "#ef4444", "🔕");
+  // ── Enable notifications (also unlocks audio) ──────────────────────────
+  const enableNotifs = async () => {
+    try { getAudioCtx().resume(); } catch {}
+    const p = await requestPermission();
+    setNotifPerm(p);
+    if (p === "granted") {
+      playSound("confirmed");
+      toast("Notifications enabled! 🔔", "You'll get live order updates.", "#10b981", "🔔");
+    } else if (p === "denied") {
+      toast("Notifications blocked 🔕", "Allow them in browser settings.", "#ef4444", "🔕");
+    }
   };
 
-  // ── Filtering ──────────────────────────────────────────────────────────
-
-  const getFilteredOrders = () => {
+  // ── Filter ─────────────────────────────────────────────────────────────
+  const filtered = (() => {
     switch (filter) {
-      case "ACTIVE":    return orders.filter((o) => ["PLACED","CONFIRMED","PREPARING","OUT_FOR_DELIVERY"].includes(o.status));
-      case "COMPLETED": return orders.filter((o) => o.status === "DELIVERED");
-      case "CANCELLED": return orders.filter((o) => o.status === "CANCELLED");
+      case "ACTIVE":    return orders.filter(o => ["PLACED","CONFIRMED","PREPARING","OUT_FOR_DELIVERY"].includes(o.status));
+      case "COMPLETED": return orders.filter(o => o.status === "DELIVERED");
+      case "CANCELLED": return orders.filter(o => o.status === "CANCELLED");
       default:          return orders;
     }
-  };
+  })();
 
-  const canCancelOrder = (status) => ["PLACED", "CONFIRMED"].includes(status);
+  const canCancel = st => ["PLACED","CONFIRMED"].includes(st);
 
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    const diffDays = Math.floor((Date.now() - date) / 86_400_000);
-    if (diffDays === 0) return `Today at ${date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`;
-    if (diffDays === 1) return "Yesterday";
-    if (diffDays < 7)  return `${diffDays} days ago`;
-    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const fmtDate = ds => {
+    const d = new Date(ds);
+    const days = Math.floor((Date.now() - d) / 86400000);
+    if (days === 0) return `Today at ${d.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}`;
+    if (days === 1) return "Yesterday";
+    if (days < 7)  return `${days} days ago`;
+    return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
   };
 
   // ── Render ─────────────────────────────────────────────────────────────
-
-  if (loading) {
-    return (
-      <div style={styles.loadingContainer}>
-        <div style={styles.spinner}></div>
-        <p style={styles.loadingText}>Loading your orders…</p>
-      </div>
-    );
-  }
-
-  const filteredOrders = getFilteredOrders();
+  if (loading) return (
+    <div style={S.center}>
+      <div style={S.spinner}/>
+      <p style={{ color:"#6c757d", marginTop:20, fontSize:16, fontWeight:500 }}>Loading your orders…</p>
+    </div>
+  );
 
   return (
     <>
-      {/* Toast stack */}
-      <Toast toasts={toasts} onDismiss={dismissToast} />
+      <Toasts list={toasts} dismiss={dismiss}/>
 
-      <div style={styles.container}>
-        <div style={styles.content}>
-          {/* Header */}
-          <div style={styles.header}>
+      <div style={S.page}>
+        <div style={S.wrap}>
+
+          {/* ── Header ── */}
+          <div style={S.header}>
             <div>
-              <h1 style={styles.title}>My Orders</h1>
-              <p style={styles.subtitle}>Track and manage your food orders</p>
+              <h1 style={S.title}>My Orders</h1>
+              <p style={S.sub}>Track and manage your food orders</p>
             </div>
 
-            {/* Controls bar */}
-            <div style={styles.controlsBar}>
+            <div style={S.controls}>
               {/* Online indicator */}
-              <div style={{ ...styles.pill, backgroundColor: isOnline ? "#d1fae5" : "#fee2e2", color: isOnline ? "#065f46" : "#991b1b" }}>
-                {isOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
+              <div style={{ ...S.pill, backgroundColor: isOnline?"#d1fae5":"#fee2e2", color: isOnline?"#065f46":"#991b1b" }}>
+                {isOnline ? <Wifi size={13}/> : <WifiOff size={13}/>}
                 <span>{isOnline ? "Live" : "Offline"}</span>
               </div>
 
               {/* Last checked */}
               {lastChecked && (
-                <div style={{ ...styles.pill, backgroundColor: "#f1f5f9", color: "#64748b" }}>
-                  <RefreshCw size={13} />
-                  <span>{lastChecked.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                <div style={{ ...S.pill, backgroundColor:"#f1f5f9", color:"#64748b" }}>
+                  <RefreshCw size={12}/>
+                  <span>{lastChecked.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</span>
                 </div>
               )}
 
               {/* Polling toggle */}
               <button
-                style={{ ...styles.iconBtn, backgroundColor: polling ? "#dbeafe" : "#f1f5f9", color: polling ? "#1d4ed8" : "#6c757d" }}
-                title={polling ? "Pause auto-refresh" : "Resume auto-refresh"}
+                style={{ ...S.iBtn, backgroundColor: pollingOn?"#dbeafe":"#f1f5f9", color: pollingOn?"#1d4ed8":"#6c757d" }}
+                title={pollingOn ? "Pause auto-refresh":"Resume auto-refresh"}
                 onClick={() => {
-                  setPolling((p) => !p);
-                  addToast(polling ? "Auto-refresh paused" : "Auto-refresh enabled", polling ? "Orders won't auto-update." : "Checking for new orders every 30s.", polling ? "#f59e0b" : "#10b981", polling ? "⏸️" : "▶️");
+                  setPollingOn(p => !p);
+                  toast(pollingOn?"Auto-refresh paused":"Auto-refresh on", pollingOn?"Updates paused.":"Checking every 20s.", pollingOn?"#f59e0b":"#10b981", pollingOn?"⏸️":"▶️");
                 }}
               >
-                <RefreshCw size={16} style={{ animation: polling ? "spin 2s linear infinite" : "none" }} />
+                <RefreshCw size={15} style={{ animation: pollingOn?"spin 2s linear infinite":"none" }}/>
               </button>
 
-              {/* Sound toggle */}
+              {/* Sound toggle — user gesture unlocks AudioContext */}
               <button
-                style={{ ...styles.iconBtn, backgroundColor: soundEnabled ? "#fef9c3" : "#f1f5f9", color: soundEnabled ? "#a16207" : "#6c757d" }}
-                title={soundEnabled ? "Mute sounds" : "Unmute sounds"}
-                onClick={() => setSoundEnabled((s) => !s)}
+                style={{ ...S.iBtn, backgroundColor: soundOn?"#fef9c3":"#f1f5f9", color: soundOn?"#a16207":"#6c757d" }}
+                title={soundOn?"Mute sounds":"Unmute sounds"}
+                onClick={() => {
+                  try { getAudioCtx().resume(); } catch {}
+                  setSoundOn(v => {
+                    const next = !v;
+                    soundRef.current = next;
+                    if (next) setTimeout(() => playSound("confirmed"), 50);
+                    return next;
+                  });
+                }}
               >
-                {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                {soundOn ? <Volume2 size={15}/> : <VolumeX size={15}/>}
               </button>
 
-              {/* Notification permission */}
+              {/* Bell */}
               <button
-                style={{ ...styles.iconBtn, backgroundColor: notifPermission === "granted" ? "#d1fae5" : "#fee2e2", color: notifPermission === "granted" ? "#065f46" : "#991b1b" }}
-                title={notifPermission === "granted" ? "Browser notifications ON" : "Enable browser notifications"}
-                onClick={handleEnableNotifications}
+                style={{ ...S.iBtn, backgroundColor: notifPerm==="granted"?"#d1fae5":"#fee2e2", color: notifPerm==="granted"?"#065f46":"#991b1b" }}
+                title={notifPerm==="granted"?"Notifications ON":"Enable notifications"}
+                onClick={enableNotifs}
               >
-                {notifPermission === "granted" ? <Bell size={16} /> : <BellOff size={16} />}
+                {notifPerm==="granted" ? <Bell size={15}/> : <BellOff size={15}/>}
               </button>
 
               {/* Manual refresh */}
-              <button style={{ ...styles.iconBtn, backgroundColor: "#f1f5f9", color: "#374151" }} title="Refresh now" onClick={() => fetchOrders(false)}>
-                <RefreshCw size={16} />
+              <button style={{ ...S.iBtn, backgroundColor:"#f1f5f9", color:"#374151" }} title="Refresh now" onClick={() => fetchOrders(false)}>
+                <RefreshCw size={15}/>
               </button>
             </div>
           </div>
 
-          {/* Notification permission banner */}
-          {notifPermission !== "granted" && (
-            <div style={styles.notifBanner}>
-              <Bell size={18} />
-              <span>Enable browser notifications to get real-time order updates even when you switch tabs.</span>
-              <button style={styles.notifBannerBtn} onClick={handleEnableNotifications}>
-                Enable
-              </button>
-              <button style={styles.notifBannerDismiss} onClick={() => setNotifPermission("dismissed")}>
-                ×
-              </button>
+          {/* ── Notification banner ── */}
+          {notifPerm !== "granted" && !bannerDismissed && (
+            <div style={S.banner}>
+              <Bell size={16}/>
+              <span style={{ flex:1 }}>Enable browser notifications for <strong>real-time order updates</strong> even when this tab is in the background.</span>
+              <button style={S.bannerBtn} onClick={enableNotifs}>Enable</button>
+              <button style={{ background:"none", border:"none", fontSize:20, color:"#92400e", cursor:"pointer" }} onClick={() => setBannerDismissed(true)}>×</button>
             </div>
           )}
 
-          {/* Filter Tabs */}
-          <div style={styles.filterTabs}>
-            {["ALL", "ACTIVE", "COMPLETED", "CANCELLED"].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setFilter(tab)}
-                style={{ ...styles.filterTab, ...(filter === tab ? styles.filterTabActive : {}) }}
-              >
-                {tab === "ALL"       && `All Orders (${orders.length})`}
-                {tab === "ACTIVE"    && `Active (${orders.filter((o) => ["PLACED","CONFIRMED","PREPARING","OUT_FOR_DELIVERY"].includes(o.status)).length})`}
-                {tab === "COMPLETED" && `Completed (${orders.filter((o) => o.status === "DELIVERED").length})`}
-                {tab === "CANCELLED" && `Cancelled (${orders.filter((o) => o.status === "CANCELLED").length})`}
+          {/* ── Filter tabs ── */}
+          <div style={S.tabs}>
+            {[
+              ["ALL",       `All Orders (${orders.length})`],
+              ["ACTIVE",    `Active (${orders.filter(o=>["PLACED","CONFIRMED","PREPARING","OUT_FOR_DELIVERY"].includes(o.status)).length})`],
+              ["COMPLETED", `Completed (${orders.filter(o=>o.status==="DELIVERED").length})`],
+              ["CANCELLED", `Cancelled (${orders.filter(o=>o.status==="CANCELLED").length})`],
+            ].map(([key, label]) => (
+              <button key={key} onClick={() => setFilter(key)}
+                style={{ ...S.tab, ...(filter===key ? S.tabActive : {}) }}>
+                {label}
               </button>
             ))}
           </div>
 
-          {/* Orders List */}
-          {filteredOrders.length === 0 ? (
-            <div style={styles.emptyState}>
-              <div style={styles.emptyIcon}><Package size={60} /></div>
-              <h3 style={styles.emptyTitle}>
-                {filter === "ALL" ? "No orders yet" : `No ${filter.toLowerCase()} orders`}
+          {/* ── Orders ── */}
+          {filtered.length === 0 ? (
+            <div style={S.empty}>
+              <div style={S.emptyIcon}><Package size={56} color="#9ca3af"/></div>
+              <h3 style={{ fontSize:26, fontWeight:700, color:"#2d3748", margin:"0 0 10px" }}>
+                {filter==="ALL" ? "No orders yet" : `No ${filter.toLowerCase()} orders`}
               </h3>
-              <p style={styles.emptyText}>
-                {filter === "ALL" ? "Start ordering from your favorite restaurants!" : `You don't have any ${filter.toLowerCase()} orders at the moment.`}
+              <p style={{ fontSize:16, color:"#6c757d", margin:"0 0 28px", lineHeight:1.6 }}>
+                {filter==="ALL" ? "Start ordering from your favourite restaurants!" : `No ${filter.toLowerCase()} orders right now.`}
               </p>
-              {filter === "ALL" && (
-                <button onClick={() => navigate("/restaurants")} style={styles.exploreButton}>
-                  Explore Restaurants
-                </button>
+              {filter==="ALL" && (
+                <button onClick={() => navigate("/restaurants")} style={S.exploreBtn}>Explore Restaurants</button>
               )}
             </div>
           ) : (
-            <div style={styles.ordersList}>
-              {filteredOrders.map((order) => {
-                const meta = getMeta(order.status);
+            <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+              {filtered.map(order => {
+                const c = cfg(order.status);
+                const isActive = ["PLACED","CONFIRMED","PREPARING","OUT_FOR_DELIVERY"].includes(order.status);
                 return (
-                  <div key={order._id} style={styles.orderCard}>
-                    {/* Order Header */}
-                    <div style={styles.orderHeader}>
-                      <div style={styles.orderInfo}>
-                        <div style={styles.restaurantInfo}>
-                          <h3 style={styles.restaurantName}>{order.restaurant?.name || "Restaurant"}</h3>
-                          {order.restaurant?.location?.address && (
-                            <p style={styles.restaurantAddress}>
-                              <MapPin size={14} />
-                              {order.restaurant.location.address}
-                            </p>
-                          )}
-                        </div>
-                        <p style={styles.orderDate}>{formatDate(order.orderDate)}</p>
-                      </div>
+                  <div key={order._id} style={{ ...S.card, borderColor: isActive ? c.color+"50":"transparent" }}>
 
-                      <div style={{ ...styles.statusBadge, backgroundColor: `${meta.color}15`, color: meta.color, borderColor: meta.color }}>
-                        {meta.icon}
-                        <span>{meta.text}</span>
+                    {/* Card header */}
+                    <div style={S.cardHead}>
+                      <div style={{ flex:1 }}>
+                        <h3 style={{ fontSize:19, fontWeight:700, color:"#2d3748", margin:"0 0 5px" }}>{order.restaurant?.name || "Restaurant"}</h3>
+                        {order.restaurant?.location?.address && (
+                          <p style={{ display:"flex", alignItems:"center", gap:5, fontSize:13, color:"#6c757d", margin:0 }}>
+                            <MapPin size={13}/> {order.restaurant.location.address}
+                          </p>
+                        )}
+                        <p style={{ fontSize:13, color:"#9ca3af", margin:"4px 0 0", fontWeight:500 }}>{fmtDate(order.orderDate)}</p>
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:7, padding:"9px 14px", borderRadius:11, fontSize:13, fontWeight:700, border:`2px solid ${c.color}`, backgroundColor:`${c.color}12`, color:c.color, whiteSpace:"nowrap", flexShrink:0 }}>
+                        {c.icon} {c.label}
+                        {isActive && <span style={{ width:7, height:7, borderRadius:"50%", backgroundColor:c.color, animation:"pulse 1.4s ease-in-out infinite" }}/>}
                       </div>
                     </div>
 
-                    {/* Order Items */}
-                    <div style={styles.orderItems}>
-                      <h4 style={styles.itemsTitle}>Items ({order.items.length})</h4>
-                      <div style={styles.itemsList}>
-                        {order.items.map((item, index) => (
-                          <div key={index} style={styles.orderItem}>
-                            {item.image && (
-                              <div style={styles.itemImageSmall}>
-                                <img src={item.image} alt={item.name} style={styles.itemImage} />
-                              </div>
-                            )}
-                            <div style={styles.itemDetails}>
-                              <span style={styles.itemName}>{item.name}</span>
-                              <span style={styles.itemQuantity}>x{item.quantity}</span>
+                    {/* Step tracker for active orders */}
+                    {isActive && <MiniTracker status={order.status}/>}
+
+                    {/* Items */}
+                    <div style={{ margin:"16px 0" }}>
+                      <h4 style={{ fontSize:14, fontWeight:700, color:"#2d3748", margin:"0 0 10px" }}>Items ({order.items.length})</h4>
+                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                        {order.items.map((item, i) => (
+                          <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", backgroundColor:"#f8f9fa", borderRadius:9 }}>
+                            {item.image && <div style={{ width:44, height:44, borderRadius:7, overflow:"hidden", flexShrink:0 }}><img src={item.image} alt={item.name} style={{ width:"100%", height:"100%", objectFit:"cover" }}/></div>}
+                            <div style={{ flex:1, display:"flex", alignItems:"center", gap:7, minWidth:0 }}>
+                              <span style={{ fontSize:14, fontWeight:600, color:"#2d3748", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
+                              <span style={{ fontSize:13, color:"#9ca3af", flexShrink:0 }}>×{item.quantity}</span>
                             </div>
-                            <span style={styles.itemPrice}>₹{(item.price * item.quantity).toFixed(2)}</span>
+                            <span style={{ fontSize:14, fontWeight:700, color:"#2d3748", flexShrink:0 }}>₹{(item.price * item.quantity).toFixed(2)}</span>
                           </div>
                         ))}
                       </div>
                     </div>
 
-                    {/* Order Summary */}
-                    <div style={styles.orderSummary}>
-                      <div style={styles.summaryRow}>
-                        <span style={styles.summaryLabel}>Subtotal</span>
-                        <span style={styles.summaryValue}>₹{order.subtotal.toFixed(2)}</span>
-                      </div>
-                      <div style={styles.summaryRow}>
-                        <span style={styles.summaryLabel}>Taxes</span>
-                        <span style={styles.summaryValue}>₹{order.taxes.toFixed(2)}</span>
-                      </div>
-                      <div style={styles.summaryRow}>
-                        <span style={styles.summaryLabel}>Delivery Fee</span>
-                        <span style={styles.summaryValue}>₹{order.deliveryFee.toFixed(2)}</span>
-                      </div>
-                      <div style={styles.summaryDivider}></div>
-                      <div style={styles.summaryRow}>
-                        <span style={styles.totalLabel}>Total</span>
-                        <span style={styles.totalValue}>₹{order.total.toFixed(2)}</span>
+                    {/* Summary */}
+                    <div style={{ padding:14, backgroundColor:"#f8f9fa", borderRadius:11, marginBottom:16 }}>
+                      {[["Subtotal",order.subtotal],["Taxes",order.taxes],["Delivery Fee",order.deliveryFee]].map(([l,v]) => (
+                        <div key={l} style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+                          <span style={{ fontSize:13, color:"#6c757d", fontWeight:500 }}>{l}</span>
+                          <span style={{ fontSize:13, fontWeight:600, color:"#2d3748" }}>₹{v.toFixed(2)}</span>
+                        </div>
+                      ))}
+                      <div style={{ height:1, backgroundColor:"#e5e7eb", margin:"10px 0" }}/>
+                      <div style={{ display:"flex", justifyContent:"space-between" }}>
+                        <span style={{ fontSize:16, fontWeight:700, color:"#2d3748" }}>Total</span>
+                        <span style={{ fontSize:19, fontWeight:800, color:"#2d3748" }}>₹{order.total.toFixed(2)}</span>
                       </div>
                     </div>
 
-                    {/* Order Actions */}
-                    <div style={styles.orderActions}>
-                      <button onClick={() => navigate(`/restaurant/${order.restaurant._id}`)} style={styles.reorderButton}>
-                        Order Again
-                      </button>
-                      {canCancelOrder(order.status) && (
-                        <button onClick={() => cancelOrder(order._id)} style={styles.cancelButton}>
-                          Cancel Order
-                        </button>
+                    {/* Actions */}
+                    <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+                      <button onClick={() => navigate(`/restaurant/${order.restaurant._id}`)} style={S.btnDark}>Order Again</button>
+                      {canCancel(order.status) && (
+                        <button onClick={() => cancelOrder(order._id)} style={S.btnRed}>Cancel Order</button>
                       )}
-                      <button onClick={() => navigate(`/order/${order._id}`)} style={styles.detailsButton}>
-                        View Details
-                      </button>
+                      <button onClick={() => navigate(`/order/${order._id}`)} style={S.btnGhost}>View Details</button>
                     </div>
                   </div>
                 );
@@ -577,110 +492,45 @@ export default function Orders() {
 }
 
 // ─── Styles ────────────────────────────────────────────────────────────────
-
-const styles = {
-  container: {
-    minHeight: "100vh",
-    backgroundColor: "#f8f9fa",
-    paddingBottom: "40px",
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-  },
-  content:        { maxWidth: "1000px", margin: "0 auto", padding: "20px" },
-  loadingContainer: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", backgroundColor: "#f8f9fa" },
-  spinner:        { width: "48px", height: "48px", border: "4px solid #e9ecef", borderTop: "4px solid #2d3748", borderRadius: "50%", animation: "spin 1s linear infinite" },
-  loadingText:    { marginTop: "20px", color: "#6c757d", fontSize: "16px", fontWeight: "500" },
-  header:         { marginBottom: "20px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: "16px" },
-  title:          { fontSize: "36px", fontWeight: "800", color: "#2d3748", margin: "0 0 8px 0", letterSpacing: "-0.5px" },
-  subtitle:       { fontSize: "17px", color: "#6c757d", margin: 0, fontWeight: "500" },
-
-  controlsBar: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" },
-  pill: { display: "flex", alignItems: "center", gap: "5px", padding: "6px 10px", borderRadius: "20px", fontSize: "12px", fontWeight: "600" },
-  iconBtn: { display: "flex", alignItems: "center", justifyContent: "center", width: "34px", height: "34px", borderRadius: "10px", border: "none", cursor: "pointer", transition: "all 0.2s ease" },
-
-  notifBanner: {
-    display: "flex", alignItems: "center", gap: "10px",
-    backgroundColor: "#fffbeb", border: "2px solid #fde68a",
-    borderRadius: "12px", padding: "12px 16px", marginBottom: "20px",
-    fontSize: "14px", color: "#92400e", flexWrap: "wrap",
-  },
-  notifBannerBtn: {
-    marginLeft: "auto", backgroundColor: "#f59e0b", color: "white",
-    border: "none", borderRadius: "8px", padding: "6px 14px",
-    fontSize: "13px", fontWeight: "700", cursor: "pointer",
-  },
-  notifBannerDismiss: { background: "none", border: "none", fontSize: "20px", color: "#92400e", cursor: "pointer", padding: "0 4px" },
-
-  filterTabs: { display: "flex", gap: "8px", marginBottom: "28px", backgroundColor: "white", padding: "8px", borderRadius: "14px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", overflowX: "auto" },
-  filterTab: { flex: 1, minWidth: "fit-content", padding: "12px 20px", backgroundColor: "transparent", border: "none", borderRadius: "10px", fontSize: "15px", fontWeight: "600", color: "#6c757d", cursor: "pointer", whiteSpace: "nowrap" },
-  filterTabActive: { backgroundColor: "#2d3748", color: "white" },
-
-  emptyState: { textAlign: "center", padding: "80px 20px", backgroundColor: "white", borderRadius: "20px", boxShadow: "0 4px 20px rgba(0,0,0,0.08)" },
-  emptyIcon:  { width: "120px", height: "120px", margin: "0 auto 24px", backgroundColor: "#f8f9fa", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", color: "#6c757d" },
-  emptyTitle: { fontSize: "28px", fontWeight: "700", color: "#2d3748", margin: "0 0 12px 0" },
-  emptyText:  { fontSize: "17px", color: "#6c757d", margin: "0 0 32px 0", lineHeight: "1.6" },
-  exploreButton: { display: "inline-flex", alignItems: "center", gap: "10px", backgroundColor: "#2d3748", color: "white", border: "none", borderRadius: "14px", padding: "16px 40px", fontSize: "17px", fontWeight: "700", cursor: "pointer", boxShadow: "0 4px 16px rgba(45,55,72,0.3)" },
-
-  ordersList: { display: "flex", flexDirection: "column", gap: "20px" },
-  orderCard:  { backgroundColor: "white", borderRadius: "20px", padding: "24px", boxShadow: "0 4px 20px rgba(0,0,0,0.08)", border: "2px solid transparent", transition: "all 0.3s ease" },
-  orderHeader:{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px", paddingBottom: "20px", borderBottom: "2px solid #f1f3f5" },
-  orderInfo:  { flex: 1 },
-  restaurantInfo: { marginBottom: "8px" },
-  restaurantName: { fontSize: "20px", fontWeight: "700", color: "#2d3748", margin: "0 0 6px 0" },
-  restaurantAddress: { display: "flex", alignItems: "center", gap: "6px", fontSize: "14px", color: "#6c757d", margin: 0 },
-  orderDate:  { fontSize: "14px", color: "#6c757d", margin: 0, fontWeight: "500" },
-  statusBadge:{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 16px", borderRadius: "12px", fontSize: "14px", fontWeight: "700", border: "2px solid", whiteSpace: "nowrap" },
-
-  orderItems: { marginBottom: "20px" },
-  itemsTitle: { fontSize: "16px", fontWeight: "700", color: "#2d3748", margin: "0 0 12px 0" },
-  itemsList:  { display: "flex", flexDirection: "column", gap: "10px" },
-  orderItem:  { display: "flex", alignItems: "center", gap: "12px", padding: "10px", backgroundColor: "#f8f9fa", borderRadius: "10px" },
-  itemImageSmall: { width: "50px", height: "50px", borderRadius: "8px", overflow: "hidden", flexShrink: 0 },
-  itemImage:  { width: "100%", height: "100%", objectFit: "cover" },
-  itemDetails:{ flex: 1, display: "flex", alignItems: "center", gap: "8px", minWidth: 0 },
-  itemName:   { fontSize: "15px", fontWeight: "600", color: "#2d3748", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  itemQuantity:{ fontSize: "14px", fontWeight: "600", color: "#6c757d", flexShrink: 0 },
-  itemPrice:  { fontSize: "15px", fontWeight: "700", color: "#2d3748", flexShrink: 0 },
-
-  orderSummary:  { padding: "16px", backgroundColor: "#f8f9fa", borderRadius: "12px", marginBottom: "20px" },
-  summaryRow:    { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" },
-  summaryLabel:  { fontSize: "14px", color: "#6c757d", fontWeight: "500" },
-  summaryValue:  { fontSize: "14px", fontWeight: "600", color: "#2d3748" },
-  summaryDivider:{ height: "1px", backgroundColor: "#dee2e6", margin: "12px 0" },
-  totalLabel:    { fontSize: "17px", fontWeight: "700", color: "#2d3748" },
-  totalValue:    { fontSize: "20px", fontWeight: "800", color: "#2d3748" },
-
-  orderActions: { display: "flex", gap: "10px", flexWrap: "wrap" },
-  reorderButton:{ flex: 1, minWidth: "140px", padding: "12px 20px", backgroundColor: "#2d3748", color: "white", border: "none", borderRadius: "12px", fontSize: "15px", fontWeight: "600", cursor: "pointer" },
-  cancelButton: { flex: 1, minWidth: "140px", padding: "12px 20px", backgroundColor: "#fff5f5", color: "#dc3545", border: "2px solid #fee", borderRadius: "12px", fontSize: "15px", fontWeight: "600", cursor: "pointer" },
-  detailsButton:{ flex: 1, minWidth: "140px", padding: "12px 20px", backgroundColor: "white", color: "#2d3748", border: "2px solid #e9ecef", borderRadius: "12px", fontSize: "15px", fontWeight: "600", cursor: "pointer" },
+const S = {
+  page:      { minHeight:"100vh", backgroundColor:"#f8f9fa", paddingBottom:40, fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" },
+  wrap:      { maxWidth:1000, margin:"0 auto", padding:20 },
+  center:    { display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", backgroundColor:"#f8f9fa" },
+  spinner:   { width:48, height:48, border:"4px solid #e9ecef", borderTop:"4px solid #2d3748", borderRadius:"50%", animation:"spin 1s linear infinite" },
+  header:    { display:"flex", alignItems:"flex-start", justifyContent:"space-between", flexWrap:"wrap", gap:16, marginBottom:20 },
+  title:     { fontSize:34, fontWeight:800, color:"#2d3748", margin:"0 0 6px", letterSpacing:"-0.5px" },
+  sub:       { fontSize:16, color:"#6c757d", margin:0, fontWeight:500 },
+  controls:  { display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" },
+  pill:      { display:"flex", alignItems:"center", gap:5, padding:"5px 10px", borderRadius:20, fontSize:12, fontWeight:600 },
+  iBtn:      { display:"flex", alignItems:"center", justifyContent:"center", width:34, height:34, borderRadius:10, border:"none", cursor:"pointer" },
+  banner:    { display:"flex", alignItems:"center", gap:10, backgroundColor:"#fffbeb", border:"2px solid #fde68a", borderRadius:12, padding:"11px 16px", marginBottom:20, fontSize:14, color:"#92400e", flexWrap:"wrap" },
+  bannerBtn: { backgroundColor:"#f59e0b", color:"white", border:"none", borderRadius:8, padding:"6px 14px", fontSize:13, fontWeight:700, cursor:"pointer", marginLeft:"auto" },
+  tabs:      { display:"flex", gap:8, marginBottom:24, backgroundColor:"white", padding:8, borderRadius:14, boxShadow:"0 2px 8px rgba(0,0,0,.06)", overflowX:"auto" },
+  tab:       { flex:1, minWidth:"fit-content", padding:"11px 18px", backgroundColor:"transparent", border:"none", borderRadius:10, fontSize:14, fontWeight:600, color:"#6c757d", cursor:"pointer", whiteSpace:"nowrap" },
+  tabActive: { backgroundColor:"#2d3748", color:"white" },
+  empty:     { textAlign:"center", padding:"80px 20px", backgroundColor:"white", borderRadius:20, boxShadow:"0 4px 20px rgba(0,0,0,.08)" },
+  emptyIcon: { width:110, height:110, margin:"0 auto 22px", backgroundColor:"#f8f9fa", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center" },
+  exploreBtn:{ display:"inline-flex", alignItems:"center", backgroundColor:"#2d3748", color:"white", border:"none", borderRadius:14, padding:"15px 36px", fontSize:16, fontWeight:700, cursor:"pointer" },
+  card:      { backgroundColor:"white", borderRadius:20, padding:22, boxShadow:"0 4px 20px rgba(0,0,0,.07)", border:"2px solid transparent", transition:"border-color 0.3s ease" },
+  cardHead:  { display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:4, paddingBottom:16, borderBottom:"2px solid #f1f3f5" },
+  btnDark:   { flex:1, minWidth:130, padding:"11px 18px", backgroundColor:"#2d3748", color:"white", border:"none", borderRadius:11, fontSize:14, fontWeight:600, cursor:"pointer" },
+  btnRed:    { flex:1, minWidth:130, padding:"11px 18px", backgroundColor:"#fff5f5", color:"#dc3545", border:"2px solid #fee", borderRadius:11, fontSize:14, fontWeight:600, cursor:"pointer" },
+  btnGhost:  { flex:1, minWidth:130, padding:"11px 18px", backgroundColor:"white", color:"#2d3748", border:"2px solid #e9ecef", borderRadius:11, fontSize:14, fontWeight:600, cursor:"pointer" },
 };
 
 // ─── Global CSS ────────────────────────────────────────────────────────────
-
-const styleSheet = document.createElement("style");
-styleSheet.textContent = `
-  @keyframes spin {
-    0%   { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+const _css = document.createElement("style");
+_css.textContent = `
+  @keyframes spin      { to { transform: rotate(360deg); } }
+  @keyframes pulse     { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.6)} }
+  @keyframes toastSlide{ from{opacity:0;transform:translateX(40px) scale(.95)} to{opacity:1;transform:translateX(0) scale(1)} }
+  button:hover:not(:disabled){ transform:translateY(-2px); box-shadow:0 6px 20px rgba(0,0,0,.14) !important; }
+  button:active:not(:disabled){ transform:translateY(0); }
+  button:focus-visible{ outline:3px solid #667eea !important; outline-offset:2px !important; }
+  @media(max-width:640px){
+    div[style*="cardHead"]{ flex-direction:column !important; }
+    div[style*="btnDark"],div[style*="btnRed"],div[style*="btnGhost"]{ min-width:100% !important; }
   }
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateX(40px); }
-    to   { opacity: 1; transform: translateX(0); }
-  }
-  @keyframes fadeOut {
-    from { opacity: 1; }
-    to   { opacity: 0; transform: translateX(40px); }
-  }
-
-  button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.15) !important; }
-  button:active:not(:disabled) { transform: translateY(0); }
-  button:focus-visible { outline: 3px solid #667eea !important; outline-offset: 2px !important; }
-
-  @media (max-width: 768px) {
-    .orders-header { flex-direction: column !important; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
-  }
+  @media(prefers-reduced-motion:reduce){ *{ animation-duration:.01ms !important; transition-duration:.01ms !important; } }
 `;
-document.head.appendChild(styleSheet);
+document.head.appendChild(_css);
