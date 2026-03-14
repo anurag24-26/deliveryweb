@@ -57,31 +57,31 @@ router.post('/', isAuthenticated, async (req, res) => {
       .populate('user', 'name phone');
 
     // ── WhatsApp Notifications (non-blocking) ─────────────────────────────────
-    try {
-      const restaurant = populatedOrder.restaurant;
-      const user = populatedOrder.user;
+    // try {
+    //   const restaurant = populatedOrder.restaurant;
+    //   const user = populatedOrder.user;
 
-      const orderDetails = {
-        orderId: order._id,
-        restaurantName: restaurant.name,
-        userName: user.name,
-        total,
-        items,
-        deliveryAddress
-      };
+    //   const orderDetails = {
+    //     orderId: order._id,
+    //     restaurantName: restaurant.name,
+    //     userName: user.name,
+    //     total,
+    //     items,
+    //     deliveryAddress
+    //   };
 
-      // Notify user their order was placed
-      if (user.phone) {
-        notifyUserOrderPlaced(user.phone, orderDetails);
-      }
+    //   // Notify user their order was placed
+    //   if (user.phone) {
+    //     notifyUserOrderPlaced(user.phone, orderDetails);
+    //   }
 
-      // Notify restaurant of new order
-      if (restaurant.phone) {
-        notifyRestaurantNewOrder(restaurant.phone, orderDetails);
-      }
-    } catch (notifErr) {
-      console.error('Notification error (non-fatal):', notifErr.message);
-    }
+    //   // Notify restaurant of new order
+    //   if (restaurant.phone) {
+    //     notifyRestaurantNewOrder(restaurant.phone, orderDetails);
+    //   }
+    // } catch (notifErr) {
+    //   console.error('Notification error (non-fatal):', notifErr.message);
+    // }
     // ─────────────────────────────────────────────────────────────────────────
 
     res.status(201).json({
