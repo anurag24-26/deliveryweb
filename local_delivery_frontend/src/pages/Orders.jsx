@@ -6,8 +6,9 @@ import {
   MapPin, Bell, BellOff, Volume2, VolumeX, RefreshCw, Wifi, WifiOff,
 } from "lucide-react";
 
-// ─── Audio ─────────────────────────────────────────────────────────────────
-// Single shared AudioContext – avoids browser autoplay blocks
+// ════════════════════════════════════════════════════════════════
+//  AUDIO  — single shared context (same pattern as Cart.jsx)
+// ════════════════════════════════════════════════════════════════
 let _audioCtx = null;
 function getAudioCtx() {
   if (!_audioCtx || _audioCtx.state === "closed")
@@ -33,7 +34,8 @@ function playSound(type) {
     notes.forEach(({ f, t }) => {
       const osc  = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
       osc.type = "sine";
       osc.frequency.setValueAtTime(f, ctx.currentTime + t);
       gain.gain.setValueAtTime(0.4, ctx.currentTime + t);
@@ -44,75 +46,168 @@ function playSound(type) {
   } catch (e) { console.warn("Audio error:", e); }
 }
 
-// ─── Browser notifications ─────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  BROWSER NOTIFICATIONS
+// ════════════════════════════════════════════════════════════════
 async function requestPermission() {
   if (!("Notification" in window)) return "unsupported";
   if (Notification.permission !== "default") return Notification.permission;
   return Notification.requestPermission();
 }
 
-function pushNotif(title, body, tag, url) {
+function pushNotif(title, body, tag, url, requireInteraction = false) {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const n = new Notification(title, {
     body,
-    icon:  "https://cdn-icons-png.flaticon.com/512/3075/3075977.png",
-    badge: "https://cdn-icons-png.flaticon.com/512/3075/3075977.png",
-    tag, renotify: true, requireInteraction: false,
+    icon:    "https://cdn-icons-png.flaticon.com/512/3075/3075977.png",
+    badge:   "https://cdn-icons-png.flaticon.com/512/3075/3075977.png",
+    tag,
+    renotify: true,
+    requireInteraction,
     vibrate: [200, 100, 200],
   });
   n.onclick = () => { window.focus(); n.close(); if (url) window.location.href = url; };
 }
 
-// ─── Status config ─────────────────────────────────────────────────────────
-const STATUS = {
-  PLACED:           { color:"#3b82f6", label:"Order Placed",     emoji:"🛒",  sound:"new_order",    icon:<Clock size={18}/> },
-  CONFIRMED:        { color:"#8b5cf6", label:"Confirmed",        emoji:"✅",  sound:"confirmed",    icon:<CheckCircle size={18}/> },
-  PREPARING:        { color:"#f59e0b", label:"Preparing",        emoji:"👨‍🍳", sound:"preparing",   icon:<ChefHat size={18}/> },
-  OUT_FOR_DELIVERY: { color:"#10b981", label:"Out for Delivery", emoji:"🚗",  sound:"out_delivery", icon:<Truck size={18}/> },
-  DELIVERED:        { color:"#059669", label:"Delivered",        emoji:"📦",  sound:"delivered",    icon:<Package size={18}/> },
-  CANCELLED:        { color:"#ef4444", label:"Cancelled",        emoji:"❌",  sound:"cancelled",    icon:<XCircle size={18}/> },
+// ════════════════════════════════════════════════════════════════
+//  STATUS CONFIG  (identical to Cart.jsx STATUS_CONFIG)
+// ════════════════════════════════════════════════════════════════
+const STATUS_CONFIG = {
+  PLACED:           { emoji:"🛒",  label:"Order Placed",      color:"#3b82f6", bg:"#eff6ff", sound:"new_order",    msg:"Your order has been placed! Waiting for restaurant confirmation.",          icon:<Clock size={17}/> },
+  CONFIRMED:        { emoji:"✅",  label:"Order Confirmed",    color:"#8b5cf6", bg:"#f5f3ff", sound:"confirmed",    msg:"Great news! The restaurant has confirmed your order.",                       icon:<CheckCircle size={17}/> },
+  PREPARING:        { emoji:"👨‍🍳", label:"Being Prepared",    color:"#f59e0b", bg:"#fffbeb", sound:"preparing",    msg:"Your food is being freshly prepared right now.",                             icon:<ChefHat size={17}/> },
+  OUT_FOR_DELIVERY: { emoji:"🚗",  label:"Out for Delivery",   color:"#10b981", bg:"#ecfdf5", sound:"out_delivery", msg:"Your order is on the way! The delivery partner is heading to you.",          icon:<Truck size={17}/> },
+  DELIVERED:        { emoji:"📦",  label:"Delivered!",         color:"#059669", bg:"#d1fae5", sound:"delivered",    msg:"Your order has been delivered. Enjoy your meal! 🎉",                         icon:<Package size={17}/> },
+  CANCELLED:        { emoji:"❌",  label:"Cancelled",          color:"#ef4444", bg:"#fef2f2", sound:"cancelled",    msg:"Your order has been cancelled.",                                              icon:<XCircle size={17}/> },
 };
-const cfg = (key) => STATUS[key] || { color:"#6c757d", label:key, emoji:"🔔", sound:"status_update", icon:<Clock size={18}/> };
+const scfg = (key) => STATUS_CONFIG[key] || { emoji:"🔔", label:key, color:"#6c757d", bg:"#f8f9fa", sound:"status_update", msg:"", icon:<Clock size={17}/> };
 
-// ─── Mini step tracker ─────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  ORDER TRACKER  — polls individual order every 15 s
+//  (same component as Cart.jsx OrderTracker)
+// ════════════════════════════════════════════════════════════════
 const STEPS = ["PLACED","CONFIRMED","PREPARING","OUT_FOR_DELIVERY","DELIVERED"];
-function MiniTracker({ status }) {
-  const idx = STEPS.indexOf(status);
-  if (status === "CANCELLED" || idx < 0) return null;
-  const c = cfg(status);
+
+function OrderTracker({ orderId, initialStatus, soundRef, onClose }) {
+  const [status,    setStatus]    = useState(initialStatus);
+  const [pulseStep, setPulseStep] = useState(false);
+  const prevStatus = useRef(initialStatus);
+  const pollRef    = useRef(null);
+
+  const fetchStatus = useCallback(async () => {
+    if (!orderId) return;
+    try {
+      const res       = await axios.get(`https://deliverybackend-0i61.onrender.com/api/orders/${orderId}`, { withCredentials: true });
+      const newStatus = res.data?.order?.status || res.data?.status;
+      if (newStatus && newStatus !== prevStatus.current) {
+        const c = scfg(newStatus);
+        if (soundRef.current) playSound(c.sound);
+        pushNotif(
+          `${c.emoji} ${c.label}`,
+          c.msg,
+          `tracker-${orderId}`,
+          `/orders`,
+          newStatus === "DELIVERED" || newStatus === "CANCELLED"
+        );
+        setPulseStep(true);
+        setTimeout(() => setPulseStep(false), 1200);
+        prevStatus.current = newStatus;
+        setStatus(newStatus);
+      }
+    } catch (e) { console.warn("Tracker poll failed:", e); }
+  }, [orderId, soundRef]);
+
+  useEffect(() => {
+    if (!orderId) return;
+    pollRef.current = setInterval(fetchStatus, 15_000);
+    return () => clearInterval(pollRef.current);
+  }, [fetchStatus, orderId]);
+
+  useEffect(() => {
+    if (status === "DELIVERED" || status === "CANCELLED")
+      clearInterval(pollRef.current);
+  }, [status]);
+
+  const c           = scfg(status);
+  const currentStep = STEPS.indexOf(status);
+  const isCancelled = status === "CANCELLED";
+  const isTerminal  = status === "DELIVERED" || isCancelled;
+
   return (
-    <div style={{ display:"flex", alignItems:"center", gap:0, marginTop:12, padding:"12px 14px", backgroundColor:c.color+"10", borderRadius:12 }}>
-      {STEPS.map((step, i) => {
-        const sc = cfg(step);
-        const done = i <= idx, active = i === idx;
-        return (
-          <div key={step} style={{ display:"flex", alignItems:"center", flex: i < STEPS.length-1 ? 1 : "none" }}>
-            <div title={sc.label} style={{
-              width:active?32:24, height:active?32:24, borderRadius:"50%",
-              backgroundColor: done ? c.color : "#e5e7eb",
-              display:"flex", alignItems:"center", justifyContent:"center",
-              fontSize: active ? 14 : 11, flexShrink:0,
-              transition:"all 0.4s ease",
-              boxShadow: active ? `0 0 0 3px ${c.color}30` : "none", zIndex:1,
-            }}>
-              {done ? <span>{sc.emoji}</span> : <div style={{ width:6, height:6, borderRadius:"50%", backgroundColor:"#d1d5db" }}/>}
-            </div>
-            {i < STEPS.length-1 && (
-              <div style={{ flex:1, height:3, backgroundColor: i < idx ? c.color : "#e5e7eb", borderRadius:2, margin:"0 3px", transition:"background-color 0.5s ease" }}/>
+    <div style={{ backgroundColor:c.bg, border:`2px solid ${c.color}30`, borderRadius:20, padding:"20px 24px", marginBottom:24, position:"relative", overflow:"hidden" }}>
+      {/* glow */}
+      <div style={{ position:"absolute", inset:0, background:`radial-gradient(circle at 10% 50%, ${c.color}12, transparent 60%)`, pointerEvents:"none" }}/>
+
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
+        <div>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
+            <span style={{ fontSize:26 }}>{c.emoji}</span>
+            <span style={{ fontSize:18, fontWeight:800, color:c.color }}>{c.label}</span>
+            {!isTerminal && (
+              <span style={{ width:8, height:8, borderRadius:"50%", backgroundColor:c.color, animation:"pulse 1.5s ease-in-out infinite" }}/>
             )}
           </div>
-        );
-      })}
+          <p style={{ margin:0, fontSize:14, color:"#4b5563", lineHeight:1.5 }}>{c.msg}</p>
+        </div>
+        <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, color:"#9ca3af", cursor:"pointer", padding:"2px 6px", borderRadius:8, flexShrink:0 }}>×</button>
+      </div>
+
+      {/* Step bar */}
+      {!isCancelled && (
+        <div style={{ display:"flex", alignItems:"center", gap:0 }}>
+          {STEPS.map((step, i) => {
+            const sc     = scfg(step);
+            const done   = i <= currentStep;
+            const active = i === currentStep;
+            return (
+              <div key={step} style={{ display:"flex", alignItems:"center", flex: i < STEPS.length-1 ? 1 : "none" }}>
+                <div title={sc.label} style={{
+                  width: active ? 36 : 28, height: active ? 36 : 28,
+                  borderRadius:"50%",
+                  backgroundColor: done ? c.color : "#e5e7eb",
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize: active ? 16 : 12,
+                  transition:"all 0.4s ease",
+                  boxShadow: active ? `0 0 0 4px ${c.color}30` : "none",
+                  animation: active && pulseStep ? "stepBounce 0.5s ease" : "none",
+                  flexShrink:0, zIndex:1,
+                }}>
+                  {done
+                    ? <span style={{ fontSize: active ? 16 : 12 }}>{sc.emoji}</span>
+                    : <span style={{ width:7, height:7, borderRadius:"50%", backgroundColor:"#d1d5db", display:"block" }}/>
+                  }
+                </div>
+                {i < STEPS.length-1 && (
+                  <div style={{ flex:1, height:4, backgroundColor: i < currentStep ? c.color : "#e5e7eb", borderRadius:2, transition:"background-color 0.6s ease", margin:"0 4px" }}/>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {isCancelled && (
+        <div style={{ padding:"10px 16px", backgroundColor:"#fee2e2", borderRadius:10, fontSize:14, color:"#991b1b", fontWeight:600 }}>
+          ❌ This order was cancelled
+        </div>
+      )}
+
+      <p style={{ margin:"12px 0 0", fontSize:11, color:"#9ca3af" }}>
+        Order ID: <code style={{ fontFamily:"monospace", color:"#6b7280" }}>{orderId}</code>
+        {!isTerminal && " · Checking every 15s"}
+      </p>
     </div>
   );
 }
 
-// ─── Toast stack ───────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  TOAST STACK
+// ════════════════════════════════════════════════════════════════
 function Toasts({ list, dismiss }) {
   return (
-    <div style={{ position:"fixed", top:20, right:20, zIndex:9999, display:"flex", flexDirection:"column", gap:10, maxWidth:370, width:"calc(100vw - 40px)", pointerEvents:"none" }}>
+    <div style={{ position:"fixed", top:20, right:20, zIndex:9999, display:"flex", flexDirection:"column", gap:10, maxWidth:380, width:"calc(100vw - 40px)", pointerEvents:"none" }}>
       {list.map(t => (
-        <div key={t.id} style={{ display:"flex", alignItems:"flex-start", gap:12, backgroundColor:"white", borderRadius:16, padding:"14px 16px", boxShadow:"0 12px 40px rgba(0,0,0,0.18)", borderLeft:`4px solid ${t.color}`, animation:"toastSlide 0.35s cubic-bezier(0.34,1.56,0.64,1)", pointerEvents:"all" }}>
+        <div key={t.id} style={{ display:"flex", alignItems:"flex-start", gap:12, backgroundColor:"white", borderRadius:16, padding:"14px 16px", boxShadow:"0 12px 40px rgba(0,0,0,0.18)", borderLeft:`4px solid ${t.color}`, animation:"toastIn 0.35s cubic-bezier(0.34,1.56,0.64,1)", pointerEvents:"all" }}>
           <span style={{ fontSize:22, flexShrink:0 }}>{t.emoji}</span>
           <div style={{ flex:1, minWidth:0 }}>
             <p style={{ margin:0, fontSize:14, fontWeight:700, color:"#1a202c" }}>{t.title}</p>
@@ -125,7 +220,9 @@ function Toasts({ list, dismiss }) {
   );
 }
 
-// ─── Main component ────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  MAIN COMPONENT
+// ════════════════════════════════════════════════════════════════
 export default function Orders() {
   const navigate = useNavigate();
 
@@ -140,16 +237,22 @@ export default function Orders() {
   const [isOnline,        setIsOnline]        = useState(navigator.onLine);
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
-  // ── CRITICAL: use a ref for soundOn so intervals never get stale values ──
-  const soundRef    = useRef(true);
-  const knownStatus = useRef({});   // { orderId: statusString }
+  // Active tracker (shown after a new order is detected)
+  const [trackerOrderId,     setTrackerOrderId]     = useState(null);
+  const [trackerInitStatus,  setTrackerInitStatus]  = useState(null);
+  const [showTracker,        setShowTracker]        = useState(false);
+
+  // ── CRITICAL: refs so intervals never have stale values ──────────────
+  const soundRef    = useRef(true);   // mirrors soundOn
+  const knownStatus = useRef({});     // { orderId: statusString }
   const pollRef     = useRef(null);
   const toastSeq    = useRef(0);
 
+  // Keep soundRef in sync with state
   useEffect(() => { soundRef.current = soundOn; }, [soundOn]);
 
-  // ── Toast helpers ──────────────────────────────────────────────────────
-  const toast = useCallback((title, msg, color, emoji, ms = 6000) => {
+  // ── Toast helpers ─────────────────────────────────────────────────────
+  const toast = useCallback((title, msg, color, emoji, ms = 7000) => {
     const id = ++toastSeq.current;
     setToasts(p => [...p, { id, title, msg, color, emoji }]);
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), ms);
@@ -157,27 +260,27 @@ export default function Orders() {
 
   const dismiss = useCallback(id => setToasts(p => p.filter(t => t.id !== id)), []);
 
-  // ── Network ────────────────────────────────────────────────────────────
+  // ── Network ───────────────────────────────────────────────────────────
   useEffect(() => {
-    const up   = () => { setIsOnline(true);  toast("Back online",  "Syncing orders…",               "#10b981","🌐"); };
-    const down = () => { setIsOnline(false); toast("You're offline","Won't refresh until connected.","#ef4444","📡"); };
+    const up   = () => { setIsOnline(true);  toast("Back online",   "Syncing your orders…",              "#10b981","🌐"); };
+    const down = () => { setIsOnline(false); toast("You're offline", "Won't refresh until reconnected.", "#ef4444","📡"); };
     window.addEventListener("online",  up);
     window.addEventListener("offline", down);
     return () => { window.removeEventListener("online",up); window.removeEventListener("offline",down); };
   }, [toast]);
 
-  // ── Permission on mount ────────────────────────────────────────────────
+  // ── Request notification permission on mount ──────────────────────────
   useEffect(() => { requestPermission().then(setNotifPerm); }, []);
 
-  // ── Unlock AudioContext on first user gesture ──────────────────────────
+  // ── Unlock AudioContext on first click anywhere (browser policy) ──────
   useEffect(() => {
     const unlock = () => { try { getAudioCtx().resume(); } catch {} };
     window.addEventListener("click", unlock, { once: true });
     return () => window.removeEventListener("click", unlock);
   }, []);
 
-  // ── Core fetch ─────────────────────────────────────────────────────────
-  // soundRef.current used instead of soundOn → no stale closure
+  // ── Core fetch + diff ─────────────────────────────────────────────────
+  //    soundRef.current used → NEVER a stale closure problem
   const fetchOrders = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
@@ -195,20 +298,36 @@ export default function Orders() {
         const oid   = order._id;
         const newSt = order.status;
         const oldSt = prev[oid];
-        const c     = cfg(newSt);
+        const c     = scfg(newSt);
         const rest  = order.restaurant?.name || "restaurant";
 
         if (!oldSt && !isFirstLoad) {
-          // Brand-new order appeared
+          // ── Brand-new order appeared ──
           if (soundRef.current) playSound("new_order");
-          pushNotif("🛒 New Order!", `Order from ${rest} placed.`, `new-${oid}`, "/orders");
-          toast("New Order! 🛒", `From ${rest}`, "#3b82f6", "🛒", 8000);
+          pushNotif("🛒 New Order!", `Order from ${rest} has been placed.`, `new-${oid}`, "/orders", false);
+          toast("New Order! 🛒", `From ${rest} — tracking live below.`, "#3b82f6", "🛒", 10000);
+          // Show inline tracker for this new order
+          setTrackerOrderId(oid);
+          setTrackerInitStatus(newSt);
+          setShowTracker(true);
 
         } else if (oldSt && oldSt !== newSt) {
-          // Status changed on existing order
+          // ── Status changed ──
           if (soundRef.current) playSound(c.sound);
-          pushNotif(`${c.emoji} ${c.label}`, `Your order from ${rest} is now: ${c.label}`, `status-${oid}`, `/order/${oid}`);
-          toast(`${c.emoji} ${c.label}`, `Your order from ${rest}`, c.color, c.emoji, 8000);
+          pushNotif(
+            `${c.emoji} ${c.label}`,
+            `Your order from ${rest}: ${c.msg}`,
+            `status-${oid}`,
+            `/orders`,
+            newSt === "DELIVERED" || newSt === "CANCELLED"
+          );
+          toast(`${c.emoji} ${c.label}`, c.msg, c.color, c.emoji, 8000);
+          // If no tracker is showing, pop one up for this order
+          if (!showTracker) {
+            setTrackerOrderId(oid);
+            setTrackerInitStatus(newSt);
+            setShowTracker(true);
+          }
         }
 
         prev[oid] = newSt;
@@ -225,7 +344,8 @@ export default function Orders() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [navigate, toast]); // ← soundOn intentionally NOT here; we use soundRef
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate, toast]); // soundOn INTENTIONALLY omitted — soundRef handles it
 
   // Initial load
   useEffect(() => { fetchOrders(false); }, []); // eslint-disable-line
@@ -238,7 +358,7 @@ export default function Orders() {
     return () => clearInterval(pollRef.current);
   }, [pollingOn, isOnline, fetchOrders]);
 
-  // ── Cancel ─────────────────────────────────────────────────────────────
+  // ── Cancel order ──────────────────────────────────────────────────────
   const cancelOrder = async (orderId) => {
     if (!window.confirm("Cancel this order?")) return;
     try {
@@ -248,7 +368,7 @@ export default function Orders() {
       );
       if (res.data.success) {
         if (soundRef.current) playSound("cancelled");
-        pushNotif("❌ Order Cancelled", "Your order has been cancelled.", `cancel-${orderId}`);
+        pushNotif("❌ Order Cancelled", "Your order has been cancelled.", `cancel-${orderId}`, "/orders", false);
         toast("Order Cancelled", "Cancelled successfully.", "#ef4444", "❌");
         fetchOrders(true);
       }
@@ -257,7 +377,7 @@ export default function Orders() {
     }
   };
 
-  // ── Enable notifications (also unlocks audio) ──────────────────────────
+  // ── Enable notifications + unlock audio in one gesture ────────────────
   const enableNotifs = async () => {
     try { getAudioCtx().resume(); } catch {}
     const p = await requestPermission();
@@ -270,7 +390,7 @@ export default function Orders() {
     }
   };
 
-  // ── Filter ─────────────────────────────────────────────────────────────
+  // ── Filters ───────────────────────────────────────────────────────────
   const filtered = (() => {
     switch (filter) {
       case "ACTIVE":    return orders.filter(o => ["PLACED","CONFIRMED","PREPARING","OUT_FOR_DELIVERY"].includes(o.status));
@@ -283,15 +403,15 @@ export default function Orders() {
   const canCancel = st => ["PLACED","CONFIRMED"].includes(st);
 
   const fmtDate = ds => {
-    const d = new Date(ds);
+    const d    = new Date(ds);
     const days = Math.floor((Date.now() - d) / 86400000);
     if (days === 0) return `Today at ${d.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}`;
     if (days === 1) return "Yesterday";
-    if (days < 7)  return `${days} days ago`;
+    if (days < 7)   return `${days} days ago`;
     return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────
   if (loading) return (
     <div style={S.center}>
       <div style={S.spinner}/>
@@ -314,8 +434,8 @@ export default function Orders() {
             </div>
 
             <div style={S.controls}>
-              {/* Online indicator */}
-              <div style={{ ...S.pill, backgroundColor: isOnline?"#d1fae5":"#fee2e2", color: isOnline?"#065f46":"#991b1b" }}>
+              {/* Online pill */}
+              <div style={{ ...S.pill, backgroundColor:isOnline?"#d1fae5":"#fee2e2", color:isOnline?"#065f46":"#991b1b" }}>
                 {isOnline ? <Wifi size={13}/> : <WifiOff size={13}/>}
                 <span>{isOnline ? "Live" : "Offline"}</span>
               </div>
@@ -330,25 +450,30 @@ export default function Orders() {
 
               {/* Polling toggle */}
               <button
-                style={{ ...S.iBtn, backgroundColor: pollingOn?"#dbeafe":"#f1f5f9", color: pollingOn?"#1d4ed8":"#6c757d" }}
-                title={pollingOn ? "Pause auto-refresh":"Resume auto-refresh"}
+                style={{ ...S.iBtn, backgroundColor:pollingOn?"#dbeafe":"#f1f5f9", color:pollingOn?"#1d4ed8":"#6c757d" }}
+                title={pollingOn ? "Pause auto-refresh" : "Resume auto-refresh"}
                 onClick={() => {
                   setPollingOn(p => !p);
-                  toast(pollingOn?"Auto-refresh paused":"Auto-refresh on", pollingOn?"Updates paused.":"Checking every 20s.", pollingOn?"#f59e0b":"#10b981", pollingOn?"⏸️":"▶️");
+                  toast(
+                    pollingOn ? "Auto-refresh paused" : "Auto-refresh on",
+                    pollingOn ? "Updates paused." : "Checking every 20s.",
+                    pollingOn ? "#f59e0b" : "#10b981",
+                    pollingOn ? "⏸️" : "▶️"
+                  );
                 }}
               >
-                <RefreshCw size={15} style={{ animation: pollingOn?"spin 2s linear infinite":"none" }}/>
+                <RefreshCw size={15} style={{ animation:pollingOn?"spin 2s linear infinite":"none" }}/>
               </button>
 
-              {/* Sound toggle — user gesture unlocks AudioContext */}
+              {/* Sound toggle — also resumes AudioContext (user gesture) */}
               <button
-                style={{ ...S.iBtn, backgroundColor: soundOn?"#fef9c3":"#f1f5f9", color: soundOn?"#a16207":"#6c757d" }}
-                title={soundOn?"Mute sounds":"Unmute sounds"}
+                style={{ ...S.iBtn, backgroundColor:soundOn?"#fef9c3":"#f1f5f9", color:soundOn?"#a16207":"#6c757d" }}
+                title={soundOn ? "Mute sounds" : "Unmute sounds"}
                 onClick={() => {
                   try { getAudioCtx().resume(); } catch {}
                   setSoundOn(v => {
                     const next = !v;
-                    soundRef.current = next;
+                    soundRef.current = next;          // sync ref immediately
                     if (next) setTimeout(() => playSound("confirmed"), 50);
                     return next;
                   });
@@ -359,8 +484,8 @@ export default function Orders() {
 
               {/* Bell */}
               <button
-                style={{ ...S.iBtn, backgroundColor: notifPerm==="granted"?"#d1fae5":"#fee2e2", color: notifPerm==="granted"?"#065f46":"#991b1b" }}
-                title={notifPerm==="granted"?"Notifications ON":"Enable notifications"}
+                style={{ ...S.iBtn, backgroundColor:notifPerm==="granted"?"#d1fae5":"#fee2e2", color:notifPerm==="granted"?"#065f46":"#991b1b" }}
+                title={notifPerm==="granted" ? "Notifications ON" : "Enable notifications"}
                 onClick={enableNotifs}
               >
                 {notifPerm==="granted" ? <Bell size={15}/> : <BellOff size={15}/>}
@@ -383,6 +508,16 @@ export default function Orders() {
             </div>
           )}
 
+          {/* ── Live order tracker (same component as Cart) ── */}
+          {showTracker && trackerOrderId && (
+            <OrderTracker
+              orderId={trackerOrderId}
+              initialStatus={trackerInitStatus}
+              soundRef={soundRef}
+              onClose={() => setShowTracker(false)}
+            />
+          )}
+
           {/* ── Filter tabs ── */}
           <div style={S.tabs}>
             {[
@@ -398,7 +533,7 @@ export default function Orders() {
             ))}
           </div>
 
-          {/* ── Orders ── */}
+          {/* ── Orders list ── */}
           {filtered.length === 0 ? (
             <div style={S.empty}>
               <div style={S.emptyIcon}><Package size={56} color="#9ca3af"/></div>
@@ -415,15 +550,17 @@ export default function Orders() {
           ) : (
             <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
               {filtered.map(order => {
-                const c = cfg(order.status);
+                const c        = scfg(order.status);
                 const isActive = ["PLACED","CONFIRMED","PREPARING","OUT_FOR_DELIVERY"].includes(order.status);
                 return (
-                  <div key={order._id} style={{ ...S.card, borderColor: isActive ? c.color+"50":"transparent" }}>
+                  <div key={order._id} style={{ ...S.card, borderColor: isActive ? c.color+"50" : "transparent" }}>
 
                     {/* Card header */}
                     <div style={S.cardHead}>
                       <div style={{ flex:1 }}>
-                        <h3 style={{ fontSize:19, fontWeight:700, color:"#2d3748", margin:"0 0 5px" }}>{order.restaurant?.name || "Restaurant"}</h3>
+                        <h3 style={{ fontSize:19, fontWeight:700, color:"#2d3748", margin:"0 0 5px" }}>
+                          {order.restaurant?.name || "Restaurant"}
+                        </h3>
                         {order.restaurant?.location?.address && (
                           <p style={{ display:"flex", alignItems:"center", gap:5, fontSize:13, color:"#6c757d", margin:0 }}>
                             <MapPin size={13}/> {order.restaurant.location.address}
@@ -431,14 +568,46 @@ export default function Orders() {
                         )}
                         <p style={{ fontSize:13, color:"#9ca3af", margin:"4px 0 0", fontWeight:500 }}>{fmtDate(order.orderDate)}</p>
                       </div>
+
+                      {/* Status badge */}
                       <div style={{ display:"flex", alignItems:"center", gap:7, padding:"9px 14px", borderRadius:11, fontSize:13, fontWeight:700, border:`2px solid ${c.color}`, backgroundColor:`${c.color}12`, color:c.color, whiteSpace:"nowrap", flexShrink:0 }}>
                         {c.icon} {c.label}
                         {isActive && <span style={{ width:7, height:7, borderRadius:"50%", backgroundColor:c.color, animation:"pulse 1.4s ease-in-out infinite" }}/>}
                       </div>
                     </div>
 
-                    {/* Step tracker for active orders */}
-                    {isActive && <MiniTracker status={order.status}/>}
+                    {/* Per-card mini progress bar for active orders */}
+                    {isActive && (() => {
+                      const idx = STEPS.indexOf(order.status);
+                      return (
+                        <div style={{ display:"flex", alignItems:"center", marginTop:12, padding:"10px 12px", backgroundColor:c.color+"10", borderRadius:12 }}>
+                          {STEPS.map((step, i) => {
+                            const sc = scfg(step);
+                            const done = i <= idx, active = i === idx;
+                            return (
+                              <div key={step} style={{ display:"flex", alignItems:"center", flex: i < STEPS.length-1 ? 1 : "none" }}>
+                                <div title={sc.label} style={{
+                                  width:active?32:24, height:active?32:24, borderRadius:"50%",
+                                  backgroundColor: done ? c.color : "#e5e7eb",
+                                  display:"flex", alignItems:"center", justifyContent:"center",
+                                  fontSize: active ? 14 : 11, flexShrink:0,
+                                  transition:"all 0.4s ease",
+                                  boxShadow: active ? `0 0 0 3px ${c.color}30` : "none", zIndex:1,
+                                }}>
+                                  {done
+                                    ? <span>{sc.emoji}</span>
+                                    : <div style={{ width:6, height:6, borderRadius:"50%", backgroundColor:"#d1d5db" }}/>
+                                  }
+                                </div>
+                                {i < STEPS.length-1 && (
+                                  <div style={{ flex:1, height:3, backgroundColor: i < idx ? c.color : "#e5e7eb", borderRadius:2, margin:"0 3px", transition:"background-color 0.5s ease" }}/>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
 
                     {/* Items */}
                     <div style={{ margin:"16px 0" }}>
@@ -446,7 +615,11 @@ export default function Orders() {
                       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                         {order.items.map((item, i) => (
                           <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", backgroundColor:"#f8f9fa", borderRadius:9 }}>
-                            {item.image && <div style={{ width:44, height:44, borderRadius:7, overflow:"hidden", flexShrink:0 }}><img src={item.image} alt={item.name} style={{ width:"100%", height:"100%", objectFit:"cover" }}/></div>}
+                            {item.image && (
+                              <div style={{ width:44, height:44, borderRadius:7, overflow:"hidden", flexShrink:0 }}>
+                                <img src={item.image} alt={item.name} style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+                              </div>
+                            )}
                             <div style={{ flex:1, display:"flex", alignItems:"center", gap:7, minWidth:0 }}>
                               <span style={{ fontSize:14, fontWeight:600, color:"#2d3748", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
                               <span style={{ fontSize:13, color:"#9ca3af", flexShrink:0 }}>×{item.quantity}</span>
@@ -491,7 +664,9 @@ export default function Orders() {
   );
 }
 
-// ─── Styles ────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  STYLES
+// ════════════════════════════════════════════════════════════════
 const S = {
   page:      { minHeight:"100vh", backgroundColor:"#f8f9fa", paddingBottom:40, fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" },
   wrap:      { maxWidth:1000, margin:"0 auto", padding:20 },
@@ -518,15 +693,20 @@ const S = {
   btnGhost:  { flex:1, minWidth:130, padding:"11px 18px", backgroundColor:"white", color:"#2d3748", border:"2px solid #e9ecef", borderRadius:11, fontSize:14, fontWeight:600, cursor:"pointer" },
 };
 
-// ─── Global CSS ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════
+//  GLOBAL CSS
+// ════════════════════════════════════════════════════════════════
 const _css = document.createElement("style");
 _css.textContent = `
-  @keyframes spin      { to { transform: rotate(360deg); } }
-  @keyframes pulse     { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.6)} }
-  @keyframes toastSlide{ from{opacity:0;transform:translateX(40px) scale(.95)} to{opacity:1;transform:translateX(0) scale(1)} }
+  @keyframes spin       { to { transform: rotate(360deg); } }
+  @keyframes pulse      { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.6)} }
+  @keyframes stepBounce { 0%{transform:scale(1)} 40%{transform:scale(1.4)} 70%{transform:scale(.9)} 100%{transform:scale(1)} }
+  @keyframes toastIn    { from{opacity:0;transform:translateX(40px) scale(.95)} to{opacity:1;transform:translateX(0) scale(1)} }
+
   button:hover:not(:disabled){ transform:translateY(-2px); box-shadow:0 6px 20px rgba(0,0,0,.14) !important; }
   button:active:not(:disabled){ transform:translateY(0); }
   button:focus-visible{ outline:3px solid #667eea !important; outline-offset:2px !important; }
+
   @media(max-width:640px){
     div[style*="cardHead"]{ flex-direction:column !important; }
     div[style*="btnDark"],div[style*="btnRed"],div[style*="btnGhost"]{ min-width:100% !important; }
